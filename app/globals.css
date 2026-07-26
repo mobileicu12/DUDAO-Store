@@ -1,0 +1,242 @@
+@import "tailwindcss";
+
+/* Class-based dark mode. The `.dark` class is written to <html> before first
+   paint by the inline script in app/layout.tsx, so there is never a flash. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Theme tokens.
+
+   Every colour in the app comes from here. Nothing else in the codebase is
+   allowed to hardcode a hex value — that is what makes light/dark and future
+   re-branding a one-file change.
+
+   Light is the working theme: staff use this at a counter, often under
+   fluorescent light, so surfaces stay near-white and contrast stays high.
+   Dark is tuned for evening cash-up rather than for looking moody — text stays
+   bright enough to read a total across a desk.
+--------------------------------------------------------------------------- */
+:root {
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #fbfbfc;
+  --subtle: #f0f0f3;
+  --ink: #14141a;
+  --ink-2: #3d3d4a;
+  --muted: #6c6c7a;
+  --faint: #9a9aa8;
+  --line: #e5e5ea;
+  --line-strong: #d3d3dc;
+
+  --accent: #5b53e0;
+  --accent-hover: #4a42d4;
+  --accent-fg: #ffffff;
+  --accent-subtle: #eeedfd;
+  --accent-ring: #5b53e033;
+
+  --success: #0f8a52;
+  --success-subtle: #e4f6ec;
+  --warning: #a76a02;
+  --warning-subtle: #fdf1dd;
+  --danger: #c0332a;
+  --danger-subtle: #fdeceb;
+  --info: #0b6cb8;
+  --info-subtle: #e6f2fb;
+
+  --shadow-sm: 0 1px 2px 0 #14141a0d;
+  --shadow-md: 0 1px 3px 0 #14141a12, 0 4px 12px -2px #14141a0f;
+  --shadow-lg: 0 8px 28px -6px #14141a1f, 0 2px 8px -2px #14141a14;
+  --shadow-pop: 0 16px 48px -12px #14141a2e, 0 4px 12px -4px #14141a1a;
+}
+
+.dark {
+  --bg: #0a0a0d;
+  --surface: #141419;
+  --surface-2: #1a1a21;
+  --subtle: #1f1f27;
+  --ink: #f3f3f6;
+  --ink-2: #cfcfd8;
+  --muted: #9797a5;
+  --faint: #6d6d7b;
+  --line: #272730;
+  --line-strong: #35353f;
+
+  --accent: #8b84f5;
+  --accent-hover: #9d97f7;
+  --accent-fg: #0a0a0d;
+  --accent-subtle: #1e1b3d;
+  --accent-ring: #8b84f540;
+
+  --success: #3dd68c;
+  --success-subtle: #0d2a1c;
+  --warning: #e5a53f;
+  --warning-subtle: #2e2110;
+  --danger: #f2726a;
+  --danger-subtle: #331614;
+  --info: #58aef2;
+  --info-subtle: #0d2436;
+
+  --shadow-sm: 0 1px 2px 0 #00000066;
+  --shadow-md: 0 1px 3px 0 #00000073, 0 4px 12px -2px #00000059;
+  --shadow-lg: 0 8px 28px -6px #00000080, 0 2px 8px -2px #00000066;
+  --shadow-pop: 0 16px 48px -12px #000000a6, 0 4px 12px -4px #00000080;
+}
+
+/* `inline` makes the generated utilities emit var(--token) rather than baking
+   the value in, which is what lets .dark re-theme without rebuilding the CSS. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-subtle: var(--subtle);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accentfg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-pop: var(--shadow-pop);
+
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* --------------------------------------------------------------------------- */
+
+* {
+  border-color: var(--line);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Money and quantities must line up column-to-column in every table. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Consistent keyboard focus everywhere. Staff navigate the till by keyboard,
+   so the focus ring is deliberately loud rather than subtle. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--accent-ring);
+}
+
+/* Scrollbars: thin and themed, so dark mode doesn't get a white gutter. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: content-box;
+}
+
+/* Number inputs: hide spinners. Staff type amounts, they never click steppers,
+   and a stray scroll over a focused price field must not change the price. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--subtle);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--surface) 60%, transparent),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Print: documents are generated as PDFs, but staff still hit Ctrl+P on list
+   pages. Strip the chrome so what prints is the data. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}

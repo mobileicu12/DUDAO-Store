@@ -1,0 +1,580 @@
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import {
+  db,
+  invalid,
+  money2,
+  notFound,
+  num,
+  numOrNull,
+  uniqueHandle,
+} from "./db";
+import { channelsFromTags, withChannels, type ChannelKey } from "./channels";
+import { tierNum, type TierPrices } from "./pricing";
+
+/**
+ * Product reads and writes. Everything the inventory grid, the product editor,
+ * the till and the Excel importer need.
+ */
+
+export type ProductStatus = "ACTIVE" | "DRAFT" | "ARCHIVED";
+
+export type ProductRecord = {
+  id: string;
+  handle: string;
+  title: string;
+  status: ProductStatus;
+  vendor: string;
+  brand: string;
+  model: string;
+  productType: string;
+  tags: string[];
+  sku: string;
+  barcode: string;
+  price: number;
+  compareAtPrice: number | null;
+  tiers: TierPrices;
+  stock: number;
+  imageUrl: string | null;
+  channels: ChannelKey[];
+  updatedAt: string;
+};
+
+type ProductRow = Prisma.ProductGetPayload<{
+  include: { images: { orderBy: { position: "asc" }; take: 1 } };
+}>;
+
+export const toRecord = (p: ProductRow): ProductRecord => ({
+  id: p.id,
+  handle: p.handle,
+  title: p.title,
+  status: p.status as ProductStatus,
+  vendor: p.vendor,
+  brand: p.brand,
+  model: p.model,
+  productType: p.productType,
+  tags: p.tags,
+  sku: p.sku,
+  barcode: p.barcode,
+  price: num(p.price),
+  compareAtPrice: numOrNull(p.compareAtPrice),
+  tiers: {
+    wholesale: numOrNull(p.priceWholesale),
+    shop: numOrNull(p.priceShop),
+    ebay: numOrNull(p.priceEbay),
+    amazon: numOrNull(p.priceAmazon),
+  },
+  stock: p.stock,
+  imageUrl: p.images[0]?.url ?? null,
+  channels: channelsFromTags(p.tags),
+  updatedAt: p.updatedAt.toISOString(),
+});
+
+const withFirstImage = {
+  images: { orderBy: { position: "asc" as const }, take: 1 },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Listing                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export type StockFilter = "all" | "low" | "out";
+
+export type ListProductsArgs = {
+  search?: string;
+  status?: ProductStatus | "all";
+  stock?: StockFilter;
+  productType?: string;
+  collectionId?: string;
+  lowStockThreshold?: number;
+  /** Opaque cursor — the id of the last row from the previous page. */
+  cursor?: string | null;
+  limit?: number;
+  sort?: "title" | "price" | "stock" | "updated";
+  dir?: "asc" | "desc";
+};
+
+export type ListProductsResult = {
+  products: ProductRecord[];
+  nextCursor: string | null;
+  total: number;
+};
+
+export function buildProductWhere(
+  args: ListProductsArgs,
+): Prisma.ProductWhereInput {
+  const where: Prisma.ProductWhereInput = {};
+
+  if (args.status && args.status !== "all") {
+    where.status = args.status;
+  } else {
+    // Archived products are hidden unless explicitly asked for — staff should
+    // not have to scroll past discontinued lines all day.
+    where.status = { not: "ARCHIVED" };
+  }
+
+  const q = args.search?.trim();
+  if (q) {
+    where.OR = [
+      { title: { contains: q, mode: "insensitive" } },
+      { sku: { contains: q, mode: "insensitive" } },
+      { barcode: { contains: q, mode: "insensitive" } },
+      { brand: { contains: q, mode: "insensitive" } },
+      { model: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  if (args.stock === "low") {
+    where.stock = { gt: 0, lte: args.lowStockThreshold ?? 5 };
+  } else if (args.stock === "out") {
+    where.stock = { lte: 0 };
+  }
+
+  if (args.productType) where.productType = args.productType;
+
+  if (args.collectionId) {
+    where.collections = { some: { collectionId: args.collectionId } };
+  }
+
+  return where;
+}
+
+export async function listProducts(
+  args: ListProductsArgs,
+): Promise<ListProductsResult> {
+  const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
+  const where = buildProductWhere(args);
+
+  const dir = args.dir ?? "asc";
+  const orderBy: Prisma.ProductOrderByWithRelationInput[] =
+    args.sort === "price"
+      ? [{ price: dir }, { id: "asc" }]
+      : args.sort === "stock"
+        ? [{ stock: dir }, { id: "asc" }]
+        : args.sort === "updated"
+          ? [{ updatedAt: dir }, { id: "asc" }]
+          : [{ title: dir }, { id: "asc" }];
+
+  const [rows, total] = await Promise.all([
+    db.product.findMany({
+      where,
+      orderBy,
+      include: withFirstImage,
+      // Cursor pagination rather than offset: the inventory list is a "load
+      // more" feed and offset paging would skip or repeat rows whenever a
+      // colleague edits stock mid-scroll.
+      take: limit + 1,
+      ...(args.cursor ? { cursor: { id: args.cursor }, skip: 1 } : {}),
+    }),
+    db.product.count({ where }),
+  ]);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  return {
+    products: page.map(toRecord),
+    nextCursor: hasMore ? page[page.length - 1].id : null,
+    total,
+  };
+}
+
+/** Fast typeahead for the till and the collection picker. */
+export async function searchProducts(
+  q: string,
+  limit = 20,
+): Promise<ProductRecord[]> {
+  const term = q.trim();
+  if (!term) return [];
+
+  const rows = await db.product.findMany({
+    where: {
+      status: "ACTIVE",
+      OR: [
+        { sku: { equals: term, mode: "insensitive" } },
+        { barcode: { equals: term, mode: "insensitive" } },
+        { title: { contains: term, mode: "insensitive" } },
+        { sku: { contains: term, mode: "insensitive" } },
+        { brand: { contains: term, mode: "insensitive" } },
+        { model: { contains: term, mode: "insensitive" } },
+      ],
+    },
+    include: withFirstImage,
+    orderBy: { title: "asc" },
+    take: Math.min(limit, 50),
+  });
+
+  return rows.map(toRecord);
+}
+
+/** Exact match on barcode or SKU, for the scanner. */
+export async function lookupByCode(code: string): Promise<ProductRecord | null> {
+  const term = code.trim();
+  if (!term) return null;
+
+  const row = await db.product.findFirst({
+    where: {
+      OR: [
+        { barcode: { equals: term, mode: "insensitive" } },
+        { sku: { equals: term, mode: "insensitive" } },
+      ],
+    },
+    include: withFirstImage,
+  });
+
+  return row ? toRecord(row) : null;
+}
+
+export async function getProduct(id: string): Promise<ProductRecord | null> {
+  const row = await db.product.findUnique({
+    where: { id },
+    include: withFirstImage,
+  });
+  return row ? toRecord(row) : null;
+}
+
+/** Distinct product types, for filter dropdowns and auto-organise. */
+export async function productTypes(): Promise<string[]> {
+  const rows = await db.product.findMany({
+    where: { productType: { not: "" } },
+    distinct: ["productType"],
+    select: { productType: true },
+    orderBy: { productType: "asc" },
+  });
+  return rows.map((r) => r.productType);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Writes                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export type ProductInput = {
+  title: string;
+  descriptionHtml?: string;
+  status?: ProductStatus;
+  vendor?: string;
+  brand?: string;
+  model?: string;
+  productType?: string;
+  tags?: string[];
+  sku?: string;
+  barcode?: string;
+  price: number;
+  compareAtPrice?: number | null;
+  tiers?: TierPrices;
+  stock?: number;
+  channels?: ChannelKey[];
+  images?: { url: string; alt?: string }[];
+  collectionIds?: string[];
+};
+
+const tierData = (tiers: TierPrices | undefined) =>
+  tiers === undefined
+    ? {}
+    : {
+        priceWholesale: tierNum(tiers.wholesale),
+        priceShop: tierNum(tiers.shop),
+        priceEbay: tierNum(tiers.ebay),
+        priceAmazon: tierNum(tiers.amazon),
+      };
+
+function assertValid(input: Partial<ProductInput>): void {
+  if (input.title !== undefined && !input.title.trim()) {
+    throw invalid("Give the product a name before saving.");
+  }
+  if (input.price !== undefined && (!Number.isFinite(input.price) || input.price < 0)) {
+    throw invalid("The price must be a number, and cannot be negative.");
+  }
+}
+
+export async function createProduct(input: ProductInput): Promise<ProductRecord> {
+  assertValid(input);
+
+  const handle = await uniqueHandle("product", input.title);
+  const tags = withChannels(input.tags ?? [], input.channels ?? []);
+
+  const row = await db.product.create({
+    data: {
+      handle,
+      title: input.title.trim(),
+      descriptionHtml: input.descriptionHtml ?? "",
+      status: input.status ?? "ACTIVE",
+      vendor: input.vendor ?? "",
+      brand: input.brand ?? "",
+      model: input.model ?? "",
+      productType: input.productType ?? "",
+      tags,
+      sku: input.sku?.trim() ?? "",
+      barcode: input.barcode?.trim() ?? "",
+      price: money2(input.price),
+      compareAtPrice: input.compareAtPrice ?? null,
+      ...tierData(input.tiers),
+      stock: Math.round(input.stock ?? 0),
+      images: input.images?.length
+        ? {
+            create: input.images.map((img, i) => ({
+              url: img.url,
+              alt: img.alt ?? "",
+              position: i,
+            })),
+          }
+        : undefined,
+      collections: input.collectionIds?.length
+        ? {
+            create: input.collectionIds.map((collectionId) => ({
+              collectionId,
+            })),
+          }
+        : undefined,
+    },
+    include: withFirstImage,
+  });
+
+  return toRecord(row);
+}
+
+export async function updateProduct(
+  id: string,
+  input: Partial<ProductInput>,
+): Promise<ProductRecord> {
+  assertValid(input);
+
+  const existing = await db.product.findUnique({
+    where: { id },
+    select: { id: true, tags: true },
+  });
+  if (!existing) throw notFound("product");
+
+  // Channels are stored as tags, so a channel edit must merge rather than
+  // replace — otherwise it would wipe segment tags and hand-added tags.
+  const tags =
+    input.channels !== undefined
+      ? withChannels(input.tags ?? existing.tags, input.channels)
+      : input.tags;
+
+  const row = await db.product.update({
+    where: { id },
+    data: {
+      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+      ...(input.descriptionHtml !== undefined
+        ? { descriptionHtml: input.descriptionHtml }
+        : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.vendor !== undefined ? { vendor: input.vendor } : {}),
+      ...(input.brand !== undefined ? { brand: input.brand } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.productType !== undefined
+        ? { productType: input.productType }
+        : {}),
+      ...(tags !== undefined ? { tags } : {}),
+      ...(input.sku !== undefined ? { sku: input.sku.trim() } : {}),
+      ...(input.barcode !== undefined ? { barcode: input.barcode.trim() } : {}),
+      ...(input.price !== undefined ? { price: money2(input.price) } : {}),
+      ...(input.compareAtPrice !== undefined
+        ? { compareAtPrice: input.compareAtPrice }
+        : {}),
+      ...tierData(input.tiers),
+      ...(input.stock !== undefined ? { stock: Math.round(input.stock) } : {}),
+      ...(input.images !== undefined
+        ? {
+            images: {
+              deleteMany: {},
+              create: input.images.map((img, i) => ({
+                url: img.url,
+                alt: img.alt ?? "",
+                position: i,
+              })),
+            },
+          }
+        : {}),
+      ...(input.collectionIds !== undefined
+        ? {
+            collections: {
+              deleteMany: {},
+              create: input.collectionIds.map((collectionId) => ({
+                collectionId,
+              })),
+            },
+          }
+        : {}),
+    },
+    include: withFirstImage,
+  });
+
+  return toRecord(row);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Bulk operations                                                            */
+/* -------------------------------------------------------------------------- */
+
+export type BulkResult = { changed: number };
+
+export async function bulkSetStatus(
+  ids: string[],
+  status: ProductStatus,
+): Promise<BulkResult> {
+  const { count } = await db.product.updateMany({
+    where: { id: { in: ids } },
+    data: { status },
+  });
+  return { changed: count };
+}
+
+export async function bulkDelete(ids: string[]): Promise<BulkResult> {
+  // Products referenced by an invoice line are archived rather than deleted:
+  // the line snapshots its own title and price, but keeping the row means the
+  // "view product" link on an old invoice still resolves.
+  const referenced = await db.invoiceLine.findMany({
+    where: { productId: { in: ids } },
+    distinct: ["productId"],
+    select: { productId: true },
+  });
+  const keep = new Set(
+    referenced.map((r) => r.productId).filter((v): v is string => v !== null),
+  );
+
+  const deletable = ids.filter((id) => !keep.has(id));
+  const archivable = ids.filter((id) => keep.has(id));
+
+  const [deleted, archived] = await Promise.all([
+    deletable.length
+      ? db.product.deleteMany({ where: { id: { in: deletable } } })
+      : Promise.resolve({ count: 0 }),
+    archivable.length
+      ? db.product.updateMany({
+          where: { id: { in: archivable } },
+          data: { status: "ARCHIVED" },
+        })
+      : Promise.resolve({ count: 0 }),
+  ]);
+
+  return { changed: deleted.count + archived.count };
+}
+
+export async function bulkSetPrice(
+  ids: string[],
+  price: number,
+): Promise<BulkResult> {
+  if (!Number.isFinite(price) || price < 0) {
+    throw invalid("Enter a price of zero or more.");
+  }
+  const { count } = await db.product.updateMany({
+    where: { id: { in: ids } },
+    data: { price: money2(price) },
+  });
+  return { changed: count };
+}
+
+export async function bulkSetStock(
+  ids: string[],
+  stock: number,
+): Promise<BulkResult> {
+  const { count } = await db.product.updateMany({
+    where: { id: { in: ids } },
+    data: { stock: Math.max(0, Math.round(stock)) },
+  });
+  return { changed: count };
+}
+
+export async function bulkAddToCollection(
+  ids: string[],
+  collectionId: string,
+): Promise<BulkResult> {
+  const collection = await db.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true },
+  });
+  if (!collection) throw notFound("collection");
+
+  // skipDuplicates keeps re-adding a product a no-op rather than an error, so
+  // selecting "all" twice is harmless.
+  const result = await db.collectionProduct.createMany({
+    data: ids.map((productId) => ({ collectionId, productId })),
+    skipDuplicates: true,
+  });
+  return { changed: result.count };
+}
+
+export async function bulkSetChannels(
+  ids: string[],
+  channels: ChannelKey[],
+): Promise<BulkResult> {
+  const rows = await db.product.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, tags: true },
+  });
+
+  await db.$transaction(
+    rows.map((r) =>
+      db.product.update({
+        where: { id: r.id },
+        data: { tags: withChannels(r.tags, channels) },
+      }),
+    ),
+  );
+
+  return { changed: rows.length };
+}
+
+/**
+ * Fill empty barcodes from the SKU, or generate an internal code when there is
+ * no SKU either. Never overwrites an existing barcode unless asked — a printed
+ * shelf label must keep matching the product.
+ */
+export async function assignBarcodes(
+  ids: string[],
+  opts: { overwrite?: boolean } = {},
+): Promise<BulkResult> {
+  const rows = await db.product.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, sku: true, barcode: true },
+  });
+
+  const targets = rows.filter((r) => opts.overwrite || !r.barcode.trim());
+  if (targets.length === 0) return { changed: 0 };
+
+  await db.$transaction(
+    targets.map((r, i) =>
+      db.product.update({
+        where: { id: r.id },
+        data: {
+          barcode:
+            r.sku.trim() ||
+            // Internal code: time-based so it stays unique across sessions.
+            `INT${Date.now().toString(36).toUpperCase()}${String(i).padStart(3, "0")}`,
+        },
+      }),
+    ),
+  );
+
+  return { changed: targets.length };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Excel columns                                                              */
+/* -------------------------------------------------------------------------- */
+
+export const EXPORT_COLUMNS = [
+  { key: "handle", header: "Handle (leave blank for new)", width: 26 },
+  { key: "title", header: "Title", width: 40 },
+  { key: "brand", header: "Brand", width: 18 },
+  { key: "model", header: "Model", width: 22 },
+  { key: "productType", header: "Type", width: 20 },
+  { key: "vendor", header: "Vendor", width: 18 },
+  { key: "tags", header: "Tags", width: 26 },
+  { key: "sku", header: "SKU", width: 18 },
+  { key: "barcode", header: "Barcode", width: 18 },
+  { key: "price", header: "Price", width: 12 },
+  { key: "compareAtPrice", header: "Compare at", width: 12 },
+  { key: "priceWholesale", header: "Wholesale", width: 12 },
+  { key: "priceShop", header: "In shop", width: 12 },
+  { key: "priceEbay", header: "eBay", width: 12 },
+  { key: "priceAmazon", header: "Amazon", width: 12 },
+  { key: "stock", header: "Stock", width: 10 },
+  { key: "status", header: "Status", width: 12 },
+  { key: "imageUrl", header: "Image URL", width: 40 },
+  { key: "collections", header: "Collections", width: 30 },
+] as const;
+
+export type ExportColumnKey = (typeof EXPORT_COLUMNS)[number]["key"];
