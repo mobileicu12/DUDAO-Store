@@ -20,7 +20,7 @@ import { MASTER_COOKIE, verifyMaster } from "./lib/master-token";
 
 const { auth } = NextAuth(authConfig);
 
-/** Reachable without a session. */
+/** Reachable without a staff session — includes the whole public storefront. */
 const PUBLIC_PREFIXES = [
   "/login",
   "/no-access",
@@ -29,6 +29,8 @@ const PUBLIC_PREFIXES = [
   "/api/me",
   "/api/cron",
   "/api/public",
+  "/shop",
+  "/api/shop",
 ];
 
 /** URL prefix → permission required to open it. Longest prefix wins. */
