@@ -35,93 +35,69 @@ function apply(choice: ThemeChoice): void {
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
 }
 
-const OPTIONS: { value: ThemeChoice; label: string; icon: string }[] = [
-  {
-    value: "light",
-    label: "Light",
-    icon: "M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m15.36-6.36-1.06 1.06M6.7 17.3l-1.06 1.06m12.72 0-1.06-1.06M6.7 6.7 5.64 5.64M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z",
-  },
-  {
-    value: "system",
-    label: "System",
-    icon: "M3.75 5.25h16.5v10.5H3.75zM8.25 19.5h7.5M12 15.75v3.75",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-    icon: "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z",
-  },
-];
+const SUN =
+  "M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m15.36-6.36-1.06 1.06M6.7 17.3l-1.06 1.06m12.72 0-1.06-1.06M6.7 6.7 5.64 5.64M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z";
+const MOON = "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z";
 
+/**
+ * A single light/dark switch. The old three-way Light/System/Dark control was
+ * fiddly in the header; this is one button that flips the theme. First load
+ * still follows the OS (via THEME_SCRIPT); the first tap makes an explicit
+ * choice and stops following the OS.
+ */
 export default function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  const [choice, setChoice] = useState<ThemeChoice>("system");
+  const [isDark, setIsDark] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(THEME_KEY) as ThemeChoice | null;
-    setChoice(
-      stored === "light" || stored === "dark" || stored === "system"
-        ? stored
-        : "system",
-    );
+    setIsDark(document.documentElement.classList.contains("dark"));
     setReady(true);
   }, []);
 
-  // Following the OS only means anything if we react when the OS changes.
+  // While still on "system", keep tracking OS changes until the user chooses.
   useEffect(() => {
-    if (choice !== "system") return;
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === "light" || stored === "dark") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => apply("system");
+    const onChange = () => {
+      apply("system");
+      setIsDark(mq.matches);
+    };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [choice]);
+  }, []);
 
-  const pick = (next: ThemeChoice) => {
-    setChoice(next);
+  const toggle = () => {
+    const next: ThemeChoice = isDark ? "light" : "dark";
+    setIsDark(!isDark);
     localStorage.setItem(THEME_KEY, next);
     apply(next);
   };
 
+  const showMoon = ready && isDark;
   return (
-    <div
-      role="radiogroup"
-      aria-label="Colour theme"
-      className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-subtle p-0.5"
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={showMoon ? "Switch to light mode" : "Switch to dark mode"}
+      title={showMoon ? "Switch to light mode" : "Switch to dark mode"}
+      className={[
+        "flex items-center justify-center rounded-md border border-line-strong bg-surface text-ink-2 transition-colors hover:bg-subtle hover:text-ink",
+        compact ? "h-9 w-9" : "h-9 w-9",
+      ].join(" ")}
     >
-      {OPTIONS.map((opt) => {
-        const active = ready && choice === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            aria-label={opt.label}
-            title={opt.label}
-            onClick={() => pick(opt.value)}
-            className={[
-              "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-              active
-                ? "bg-surface text-ink shadow-sm"
-                : "text-muted hover:text-ink",
-            ].join(" ")}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.7}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4 shrink-0"
-              aria-hidden
-            >
-              <path d={opt.icon} />
-            </svg>
-            {!compact && <span className="hidden sm:inline">{opt.label}</span>}
-          </button>
-        );
-      })}
-    </div>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-[1.15rem] w-[1.15rem]"
+        aria-hidden
+      >
+        <path d={showMoon ? MOON : SUN} />
+      </svg>
+    </button>
   );
 }
