@@ -229,10 +229,10 @@ export default function TillClient({
   /* Completing                                                              */
   /* ---------------------------------------------------------------------- */
 
-  const complete = async (payment: {
-    amount: number;
-    method: PaymentMethod;
-  } | null) => {
+  const complete = async (
+    payment: { amount: number; method: PaymentMethod } | null,
+    override = false,
+  ) => {
     setBusy(true);
     try {
       const res = await fetch("/api/billing", {
@@ -254,10 +254,22 @@ export default function TillClient({
           discount: Number(discount) || 0,
           notes,
           payment,
+          override,
         }),
       });
 
       const body = await res.json();
+
+      // 409 = the sale would breach the customer's credit limit. Let the staff
+      // member consciously override and resubmit, rather than blocking outright.
+      if (res.status === 409 && !override) {
+        setBusy(false);
+        if (window.confirm(`${body.error}\n\nBill this customer anyway?`)) {
+          await complete(payment, true);
+        }
+        return;
+      }
+
       if (!res.ok) throw new Error(body.error ?? "That sale was not completed.");
 
       setDone({ id: body.id, number: body.number });

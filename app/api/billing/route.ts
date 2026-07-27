@@ -58,6 +58,8 @@ export async function POST(req: Request) {
       notes: body.notes ?? "",
       staffEmail: caller.email,
       staffName: caller.name,
+      // Set once the staff member has confirmed billing past a credit limit.
+      overrideCreditLimit: body.override === true,
       payment: body.payment
         ? {
             amount: Number(body.payment.amount) || 0,

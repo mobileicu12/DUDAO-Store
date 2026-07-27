@@ -1,6 +1,7 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
-import { db, invalid, money2, notFound, num } from "./db";
+import { DataError, db, invalid, money2, notFound, num, numOrNull } from "./db";
+import { money } from "./business";
 import { nextInvoiceNumber } from "./settings";
 import type { SegmentKey } from "./segments";
 import {
@@ -152,7 +153,81 @@ export type CreateBillArgs = {
   staffName: string;
   /** Take payment immediately — the normal counter sale. */
   payment?: { amount: number; method: Method; note?: string } | null;
+  /**
+   * Skip the credit-limit guard. The till sets this after a staff member has
+   * consciously chosen to bill a customer past their limit; the storefront
+   * sets it for cash/bank collection orders that are paid before release.
+   */
+  overrideCreditLimit?: boolean;
 };
+
+/**
+ * A customer's current debt and their limit, computed the same way as the
+ * customers screen: opening balance + unvoided invoice totals − live payments.
+ * Kept local to avoid a cycle with lib/customers, which imports from here.
+ */
+async function creditPosition(
+  customerId: string,
+): Promise<{ creditLimit: number | null; outstanding: number } | null> {
+  const row = await db.customer.findUnique({
+    where: { id: customerId },
+    include: {
+      invoices: { where: { status: { not: "VOID" } }, include: { lines: true } },
+      payments: { where: { revoked: false }, select: { amount: true } },
+    },
+  });
+  if (!row) return null;
+
+  const billed = row.invoices.reduce(
+    (s, inv) =>
+      s +
+      calcTotals({
+        lines: inv.lines.map((l) => ({ quantity: l.quantity, unitPrice: num(l.unitPrice) })),
+        discount: num(inv.discount),
+        taxable: inv.taxable,
+        taxRate: num(inv.taxRate),
+        paid: 0,
+      }).total,
+    0,
+  );
+  const paid = row.payments.reduce((s, p) => s + num(p.amount), 0);
+  return {
+    creditLimit: numOrNull(row.creditLimit),
+    outstanding: money2(num(row.openingBalance) + billed - paid),
+  };
+}
+
+/**
+ * Throw when a new bill would push a customer past their credit limit. Only the
+ * unpaid part of the bill counts — money taken now never adds to the debt. A
+ * blank limit means no limit. Callers pass overrideCreditLimit to bypass this.
+ */
+async function assertWithinCreditLimit(args: CreateBillArgs): Promise<void> {
+  if (!args.customerId || args.overrideCreditLimit) return;
+  const credit = await creditPosition(args.customerId);
+  if (!credit || credit.creditLimit === null) return;
+
+  const totals = calcTotals({
+    lines: args.lines.map((l) => ({ quantity: l.quantity, unitPrice: l.unitPrice })),
+    discount: args.discount ?? 0,
+    taxable: args.taxable ?? true,
+    taxRate: args.taxRate,
+    paid: 0,
+  });
+  const payAmount = args.payment?.amount ?? 0;
+  const adding = Math.max(0, money2(totals.total - Math.min(payAmount, totals.total)));
+  const projected = money2(credit.outstanding + adding);
+
+  // Small epsilon so a bill landing exactly on the limit is allowed.
+  if (projected > credit.creditLimit + 0.005) {
+    throw new DataError(
+      `This takes the account to ${money(projected)}, over its ${money(
+        credit.creditLimit,
+      )} credit limit. Reduce the order, take a payment, or confirm to override.`,
+      { status: 409, code: "conflict" },
+    );
+  }
+}
 
 function validateLines(lines: LineInput[]): void {
   if (!Array.isArray(lines) || lines.length === 0) {
@@ -181,6 +256,7 @@ function validateLines(lines: LineInput[]): void {
  */
 export async function createBill(args: CreateBillArgs): Promise<InvoiceRecord> {
   validateLines(args.lines);
+  await assertWithinCreditLimit(args);
 
   // Allocate the number outside the transaction: it has its own atomic
   // counter, and holding a row lock across the whole sale would serialise

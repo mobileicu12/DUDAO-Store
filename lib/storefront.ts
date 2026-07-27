@@ -225,6 +225,10 @@ export async function createTradeCheckout(args: {
     staffEmail: "storefront",
     staffName: "Storefront",
     payment: null,
+    // The credit limit is enforced for "on account" orders, which defer
+    // payment. Cash-on-collection and bank transfer are paid before the goods
+    // leave, so they are not blocked by an existing balance.
+    overrideCreditLimit: args.method !== "account",
   });
 }
 
