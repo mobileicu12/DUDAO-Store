@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import Link from "next/link";
 import { money } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
@@ -10,6 +9,7 @@ import {
   Alert,
   Button,
   PageHeader,
+  SectionLabel,
   Skeleton,
   StatCard,
 } from "@/components/ui/primitives";
@@ -253,13 +253,5 @@ export default function DashboardClient() {
         ))}
       </section>
     </div>
-  );
-}
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-2.5 text-[0.7rem] font-semibold tracking-[0.14em] text-faint uppercase">
-      {children}
-    </h2>
   );
 }

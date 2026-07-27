@@ -551,22 +551,20 @@ export function StatCard({
   icon?: ReactNode;
   loading?: boolean;
 }) {
-  const accentBar: Record<Tone, string> = {
-    neutral: "bg-line-strong",
-    accent: "bg-accent",
-    success: "bg-success",
-    warning: "bg-warning",
-    danger: "bg-danger",
-    info: "bg-info",
+  // Statement-style card: a plain rounded panel, quiet grey label, bold value.
+  // Tone tints the value only, so warnings/debts still read at a glance.
+  const valueTone: Record<Tone, string> = {
+    neutral: "text-ink",
+    accent: "text-accent",
+    success: "text-success",
+    warning: "text-warning",
+    danger: "text-danger",
+    info: "text-ink",
   };
   return (
-    <div className="relative overflow-hidden rounded-lg border border-line bg-surface p-4 pl-[1.125rem] shadow-sm">
-      <span
-        className={cx("absolute inset-y-0 left-0 w-1", accentBar[tone])}
-        aria-hidden
-      />
+    <div className="rounded-lg border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[0.7rem] font-semibold tracking-wider text-muted uppercase">
+        <p className="text-[0.7rem] font-medium tracking-wider text-muted uppercase">
           {label}
         </p>
         {icon && <span className="text-faint">{icon}</span>}
@@ -574,11 +572,31 @@ export function StatCard({
       {loading ? (
         <Skeleton className="mt-2.5 h-8 w-24" />
       ) : (
-        <p className="tnum mt-1.5 text-[1.7rem] leading-none font-semibold tracking-tight text-ink">
+        <p
+          className={cx(
+            "tnum mt-2 text-[1.7rem] leading-none font-semibold tracking-tight",
+            valueTone[tone],
+          )}
+        >
           {value}
         </p>
       )}
       {hint && <p className="mt-1.5 text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * Amber section eyebrow with the little underline dash from the statements.
+ * The one heading style used above every section of the app.
+ */
+export function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-3">
+      <p className="text-[0.7rem] font-semibold tracking-[0.14em] text-accent uppercase">
+        {children}
+      </p>
+      <span className="mt-1 block h-0.5 w-6 rounded-full bg-accent/50" aria-hidden />
     </div>
   );
 }
