@@ -75,9 +75,12 @@ export default function AppHeader() {
         <Logo size="sm" />
       </Link>
 
-      <h1 className="hidden min-w-0 truncate text-base font-semibold text-ink md:block">
-        {titleForPath(pathname)}
-      </h1>
+      <div className="hidden min-w-0 items-center gap-2.5 md:flex">
+        <span className="h-4 w-1 shrink-0 rounded-full bg-accent" aria-hidden />
+        <h1 className="min-w-0 truncate text-[0.95rem] font-semibold tracking-tight text-ink">
+          {titleForPath(pathname)}
+        </h1>
+      </div>
 
       <div className="ml-auto flex items-center gap-2">
         {showReports && (
@@ -105,11 +108,11 @@ export default function AppHeader() {
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             className={cx(
-              "flex h-9 items-center gap-2 rounded-lg border border-line bg-surface pr-2 pl-1 transition-colors hover:bg-subtle",
+              "flex h-9 items-center gap-2 rounded-md border border-line-strong bg-surface pr-2 pl-1 transition-colors hover:bg-subtle",
               menuOpen && "bg-subtle",
             )}
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-xs font-semibold text-accentfg">
+            <span className="flex h-7 w-7 items-center justify-center rounded bg-accent text-xs font-semibold text-accentfg">
               {initials || "?"}
             </span>
             <span className="hidden max-w-28 truncate text-sm font-medium text-ink sm:block">
@@ -131,7 +134,7 @@ export default function AppHeader() {
           {menuOpen && (
             <div
               role="menu"
-              className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-xl border border-line bg-surface shadow-pop"
+              className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-lg border border-line bg-surface shadow-pop"
             >
               <div className="border-b border-line px-4 py-3">
                 <p className="truncate text-sm font-semibold text-ink">
@@ -156,7 +159,7 @@ export default function AppHeader() {
                 <Link
                   href="/portal/settings"
                   role="menuitem"
-                  className="block rounded-lg px-2.5 py-2 text-sm text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
+                  className="block rounded-md px-2.5 py-2 text-sm text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
                 >
                   Settings
                 </Link>
@@ -164,7 +167,7 @@ export default function AppHeader() {
                   type="button"
                   role="menuitem"
                   onClick={handleSignOut}
-                  className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-danger transition-colors hover:bg-danger-subtle"
+                  className="block w-full rounded-md px-2.5 py-2 text-left text-sm text-danger transition-colors hover:bg-danger-subtle"
                 >
                   Sign out
                 </button>

@@ -26,17 +26,17 @@ type ButtonVariant =
 type ButtonSize = "sm" | "md" | "lg";
 
 const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all " +
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all " +
   "disabled:pointer-events-none disabled:opacity-50 active:scale-[.985] " +
   "whitespace-nowrap select-none";
 
 const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent text-accentfg shadow-sm hover:bg-accent-hover hover:shadow-md",
+    "bg-accent text-accentfg shadow-sm hover:bg-accent-hover",
   secondary:
-    "bg-subtle text-ink border border-line hover:bg-surface hover:border-line-strong",
+    "bg-surface text-ink border border-line-strong hover:bg-subtle",
   outline:
-    "bg-transparent text-ink border border-line-strong hover:bg-subtle",
+    "bg-transparent text-ink-2 border border-line-strong hover:bg-subtle hover:text-ink",
   ghost: "bg-transparent text-muted hover:bg-subtle hover:text-ink",
   danger: "bg-danger text-white shadow-sm hover:brightness-110",
   success: "bg-success text-white shadow-sm hover:brightness-110",
@@ -44,8 +44,8 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
   sm: "h-8 px-3 text-xs",
-  md: "h-10 px-4 text-sm",
-  lg: "h-12 px-6 text-base",
+  md: "h-9 px-3.5 text-sm",
+  lg: "h-11 px-5 text-[0.95rem]",
 };
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -99,7 +99,7 @@ export const IconButton = forwardRef<
   { label, variant = "ghost", size = "md", className, children, ...rest },
   ref,
 ) {
-  const box = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-12 w-12" : "h-10 w-10";
+  const box = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-11 w-11" : "h-9 w-9";
   return (
     <button
       ref={ref}
@@ -135,7 +135,7 @@ export function Card({
   return (
     <div
       className={cx(
-        "rounded-xl border border-line bg-surface shadow-sm",
+        "rounded-lg border border-line bg-surface shadow-sm",
         padded && "p-4 sm:p-5",
         className,
       )}
@@ -174,9 +174,9 @@ export function CardHeader({
 /* -------------------------------------------------------------------------- */
 
 const FIELD_BASE =
-  "w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink " +
+  "w-full rounded-md border border-line-strong bg-surface px-3 text-sm text-ink " +
   "placeholder:text-faint transition-colors " +
-  "hover:border-line-strong focus:border-accent focus:outline-none " +
+  "hover:border-muted focus:border-accent focus:outline-none " +
   "focus:ring-2 focus:ring-[var(--accent-ring)] " +
   "disabled:cursor-not-allowed disabled:bg-subtle disabled:text-muted";
 
@@ -189,7 +189,7 @@ export const Input = forwardRef<
       ref={ref}
       className={cx(
         FIELD_BASE,
-        "h-10",
+        "h-9",
         invalid && "border-danger focus:border-danger",
         className,
       )}
@@ -219,7 +219,7 @@ export const Select = forwardRef<
   return (
     <select
       ref={ref}
-      className={cx(FIELD_BASE, "h-10 cursor-pointer pr-8", className)}
+      className={cx(FIELD_BASE, "h-9 cursor-pointer pr-8", className)}
       {...rest}
     >
       {children}
@@ -456,7 +456,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
       {icon && (
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-subtle text-muted">
+        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-subtle text-muted">
           {icon}
         </div>
       )}
@@ -491,7 +491,7 @@ export function Alert({
   return (
     <div
       className={cx(
-        "rounded-lg border px-3.5 py-3 text-sm",
+        "rounded-md border px-3.5 py-3 text-sm",
         toneClass[tone],
       )}
       role={tone === "danger" ? "alert" : undefined}
@@ -516,12 +516,18 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-line pb-4">
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
-          {title}
+        <h1 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-ink sm:text-[1.4rem]">
+          <span
+            className="h-5 w-1 shrink-0 rounded-full bg-accent sm:h-6"
+            aria-hidden
+          />
+          <span className="truncate">{title}</span>
         </h1>
-        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        {subtitle && (
+          <p className="mt-1.5 pl-[0.9375rem] text-sm text-muted">{subtitle}</p>
+        )}
       </div>
       {actions && (
         <div className="flex flex-wrap items-center gap-2">{actions}</div>
@@ -554,25 +560,25 @@ export function StatCard({
     info: "bg-info",
   };
   return (
-    <div className="relative overflow-hidden rounded-xl border border-line bg-surface p-4 shadow-sm">
+    <div className="relative overflow-hidden rounded-lg border border-line bg-surface p-4 pl-[1.125rem] shadow-sm">
       <span
-        className={cx("absolute inset-x-0 top-0 h-0.5", accentBar[tone])}
+        className={cx("absolute inset-y-0 left-0 w-1", accentBar[tone])}
         aria-hidden
       />
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-medium tracking-wide text-muted uppercase">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[0.7rem] font-semibold tracking-wider text-muted uppercase">
           {label}
         </p>
         {icon && <span className="text-faint">{icon}</span>}
       </div>
       {loading ? (
-        <Skeleton className="mt-2 h-7 w-24" />
+        <Skeleton className="mt-2.5 h-8 w-24" />
       ) : (
-        <p className="tnum mt-1.5 text-2xl font-semibold tracking-tight text-ink">
+        <p className="tnum mt-1.5 text-[1.7rem] leading-none font-semibold tracking-tight text-ink">
           {value}
         </p>
       )}
-      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+      {hint && <p className="mt-1.5 text-xs text-muted">{hint}</p>}
     </div>
   );
 }

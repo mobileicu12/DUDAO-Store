@@ -90,31 +90,38 @@ export default function LoginClient({
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
-      {/* Brand panel — decorative on desktop, a slim header on mobile. */}
-      <div className="relative hidden overflow-hidden bg-accent lg:flex lg:w-[44%] lg:flex-col lg:justify-between lg:p-12">
+      {/* Brand panel — decorative on desktop, a slim header on mobile.
+          A constant dark slate wall (independent of theme) with a warm amber
+          mark, so the accent reads the same in light and dark. */}
+      <div className="relative hidden overflow-hidden bg-[#0b1220] lg:flex lg:w-[44%] lg:flex-col lg:justify-between lg:p-12">
         <div
-          className="pointer-events-none absolute inset-0 opacity-[0.14]"
+          className="pointer-events-none absolute inset-0 opacity-[0.10]"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 20% 20%, #fff 0 1px, transparent 1px)",
-            backgroundSize: "28px 28px",
+              "radial-gradient(circle at 20% 20%, #f59e0b 0 1px, transparent 1px)",
+            backgroundSize: "26px 26px",
           }}
           aria-hidden
         />
+        <div
+          className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-amber-500/20 blur-3xl"
+          aria-hidden
+        />
         <div className="relative">
-          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-white backdrop-blur">
+          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-amber-500 text-lg font-bold text-[#0b1220] shadow-lg">
             {BUSINESS.name.slice(0, 2).toUpperCase()}
           </span>
         </div>
         <div className="relative">
+          <span className="mb-4 block h-1 w-10 rounded-full bg-amber-500" aria-hidden />
           <h2 className="text-3xl font-semibold tracking-tight text-white">
             {BUSINESS.name}
           </h2>
-          <p className="mt-2 max-w-sm text-sm text-white/70">
+          <p className="mt-2 max-w-sm text-sm text-slate-300">
             {BUSINESS.tagline}
           </p>
         </div>
-        <p className="relative text-xs text-white/50">
+        <p className="relative text-xs text-slate-500">
           Staff portal · {new Date().getFullYear()}
         </p>
       </div>

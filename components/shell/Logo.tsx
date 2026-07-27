@@ -19,9 +19,9 @@ export function Logo({
   className?: string;
 }) {
   const box = {
-    sm: "h-8 w-8 text-xs rounded-lg",
-    md: "h-9 w-9 text-sm rounded-lg",
-    lg: "h-12 w-12 text-base rounded-xl",
+    sm: "h-8 w-8 text-xs rounded-md",
+    md: "h-9 w-9 text-sm rounded-md",
+    lg: "h-12 w-12 text-base rounded-lg",
   }[size];
 
   const title = {
