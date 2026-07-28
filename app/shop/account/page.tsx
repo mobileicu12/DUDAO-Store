@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { money } from "@/lib/business";
 import { currentTradeCustomer, tradeAccount } from "@/lib/storefront";
-import { cx } from "@/components/ui/primitives";
+import { cx } from "@/lib/cx";
 import AccountForm from "./AccountForm";
 
 export const dynamic = "force-dynamic";

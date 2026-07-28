@@ -158,18 +158,18 @@ export default function ImportExportClient() {
           <Card padded={false} className="overflow-hidden">
             <div className="max-h-96 overflow-y-auto">
               <table className="w-full border-collapse text-sm">
-                <thead className="sticky top-0 border-b border-line bg-surface-2">
+                <thead className="sticky top-0 border-b border-line bg-subtle">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">
                       Row
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">
                       Product
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">
                       Result
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">
                       Detail
                     </th>
                   </tr>

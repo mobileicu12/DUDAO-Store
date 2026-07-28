@@ -132,14 +132,14 @@ export default function OrdersClient() {
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[42rem] border-collapse text-sm">
-            <thead className="border-b border-line bg-surface-2">
+            <thead className="border-b border-line bg-subtle">
               <tr>
                 {["Order", "Customer", "Channel", "Date", "Status", "Total"].map(
                   (h, i) => (
                     <th
                       key={h}
                       className={cx(
-                        "px-3 py-2.5 text-xs font-semibold text-muted",
+                        "px-3 py-2.5 text-xs font-semibold text-ink-2",
                         i === 5 ? "text-right" : "text-left",
                       )}
                     >

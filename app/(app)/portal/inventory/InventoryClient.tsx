@@ -338,7 +338,7 @@ export default function InventoryClient() {
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[52rem] border-collapse text-sm">
-            <thead className="border-b border-line bg-surface-2">
+            <thead className="border-b border-line bg-subtle">
               <tr>
                 <th scope="col" className="w-10 px-3 py-2.5">
                   <Checkbox

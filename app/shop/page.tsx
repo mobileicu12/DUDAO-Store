@@ -6,7 +6,7 @@ import {
   shopProductTypes,
   wholesalePrice,
 } from "@/lib/storefront";
-import { cx } from "@/components/ui/primitives";
+import { cx } from "@/lib/cx";
 import AddToCart from "./AddToCart";
 
 export const dynamic = "force-dynamic";

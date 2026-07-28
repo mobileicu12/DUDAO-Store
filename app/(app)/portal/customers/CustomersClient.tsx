@@ -169,14 +169,14 @@ export default function CustomersClient() {
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[48rem] border-collapse text-sm">
-            <thead className="border-b border-line bg-surface-2">
+            <thead className="border-b border-line bg-subtle">
               <tr>
                 {visible.map((d) => (
                   <th
                     key={d.key}
                     scope="col"
                     className={cx(
-                      "px-3 py-2.5 text-xs font-semibold text-muted",
+                      "px-3 py-2.5 text-xs font-semibold text-ink-2",
                       d.numeric ? "text-right" : "text-left",
                     )}
                   >
