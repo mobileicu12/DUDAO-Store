@@ -20,7 +20,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
-  Select,
+  Segmented,
   Skeleton,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
@@ -311,18 +311,15 @@ export default function InventoryClient() {
           />
         </div>
 
-        <Select
+        <Segmented
           value={stockFilter}
-          onChange={(e) =>
-            setStockFilter(e.target.value as "all" | "low" | "out")
-          }
-          className="h-9 w-auto"
-          aria-label="Stock filter"
-        >
-          <option value="all">All stock</option>
-          <option value="low">Low stock (≤ {threshold})</option>
-          <option value="out">Out of stock</option>
-        </Select>
+          onChange={setStockFilter}
+          options={[
+            { value: "all", label: "All stock" },
+            { value: "low", label: `Low (≤${threshold})` },
+            { value: "out", label: "Out" },
+          ]}
+        />
 
         <div className="ml-auto">
           <ColumnChooser

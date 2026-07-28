@@ -13,7 +13,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
-  Select,
+  Segmented,
   Skeleton,
   type Tone,
 } from "@/components/ui/primitives";
@@ -114,19 +114,14 @@ export default function OrdersClient() {
           className="h-9 w-full sm:w-56"
           aria-label="Search orders"
         />
-        <Select
+        <Segmented
           value={segment}
-          onChange={(e) => setSegment(e.target.value)}
-          className="h-9 w-auto"
-          aria-label="Source"
-        >
-          <option value="all">All channels</option>
-          {SEGMENTS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {s.label}
-            </option>
-          ))}
-        </Select>
+          onChange={setSegment}
+          options={[
+            { value: "all", label: "All" },
+            ...SEGMENTS.map((s) => ({ value: s.key, label: s.label })),
+          ]}
+        />
       </div>
 
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
