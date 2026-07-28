@@ -11,7 +11,7 @@ import type { BusinessDoc } from "./invoice-pdf";
 
 const INK = "#1a1a1a";
 const MUTED = "#6b655c";
-const ACCENT = "#5b53e0";
+const ACCENT = "#b7891f";
 const HAIRLINE = "#e2ddd3";
 const FILL = "#f5f3ee";
 const GREEN = "#1a7f4b";
