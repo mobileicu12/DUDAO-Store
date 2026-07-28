@@ -656,7 +656,7 @@ export async function listInvoices(args: InvoiceListArgs) {
   const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
   const where = buildInvoiceWhere(args);
 
-  const [rows, total] = await Promise.all([
+  const [rows, total, summaryRows] = await Promise.all([
     db.invoice.findMany({
       where,
       include: invoiceInclude,
@@ -665,15 +665,27 @@ export async function listInvoices(args: InvoiceListArgs) {
       ...(args.cursor ? { cursor: { id: args.cursor }, skip: 1 } : {}),
     }),
     db.invoice.count({ where }),
+    // Totals across the whole filtered set (not just the page), for the header
+    // stat cards. Capped so a huge book never blocks the list load.
+    db.invoice.findMany({ where, include: invoiceInclude, take: 2000 }),
   ]);
 
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
 
+  const recs = summaryRows.map(toInvoiceRecord);
+  const summary = {
+    count: total,
+    billed: money2(recs.reduce((s, r) => s + r.totals.total, 0)),
+    paid: money2(recs.reduce((s, r) => s + r.totals.paid, 0)),
+    outstanding: money2(recs.reduce((s, r) => s + r.totals.balance, 0)),
+  };
+
   return {
     invoices: page.map(toInvoiceRecord),
     nextCursor: hasMore ? page[page.length - 1].id : null,
     total,
+    summary,
   };
 }
 
