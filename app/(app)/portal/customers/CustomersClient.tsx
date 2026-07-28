@@ -18,8 +18,9 @@ import {
   Field,
   Input,
   PageHeader,
-  Select,
+  Segmented,
   Skeleton,
+  StatCard,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
@@ -118,6 +119,7 @@ export default function CustomersClient() {
 
   const isVisible = (k: ColKey) => visible.some((v) => v.key === k);
   const owedTotal = customers.reduce((s, c) => s + Math.max(c.outstanding, 0), 0);
+  const billedTotal = customers.reduce((s, c) => s + c.totalBilled, 0);
 
   return (
     <div>
@@ -135,6 +137,17 @@ export default function CustomersClient() {
         }
       />
 
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Accounts" value={total.toLocaleString()} loading={loading} />
+        <StatCard label="Total billed" value={money(billedTotal)} loading={loading} />
+        <StatCard label="Outstanding" value={money(owedTotal)} tone="warning" loading={loading} />
+        <StatCard
+          label="On account"
+          value={customers.filter((c) => c.outstanding > 0).length}
+          loading={loading}
+        />
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
           value={search}
@@ -143,19 +156,14 @@ export default function CustomersClient() {
           className="h-9 w-full sm:w-64"
           aria-label="Search customers"
         />
-        <Select
+        <Segmented
           value={segment}
-          onChange={(e) => setSegment(e.target.value)}
-          className="h-9 w-auto"
-          aria-label="Source"
-        >
-          <option value="all">All sources</option>
-          {SEGMENTS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {s.label}
-            </option>
-          ))}
-        </Select>
+          onChange={setSegment}
+          options={[
+            { value: "all", label: "All" },
+            ...SEGMENTS.map((s) => ({ value: s.key, label: s.label })),
+          ]}
+        />
         <div className="ml-auto">
           <ColumnChooser
             defs={COLUMNS}

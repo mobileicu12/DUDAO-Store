@@ -586,6 +586,38 @@ export function StatCard({
   );
 }
 
+/** Dark-active segmented control — the filter/mode switch used across the app. */
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  size = "sm",
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  size?: "sm" | "md";
+}) {
+  return (
+    <div className="inline-flex items-center rounded-lg border border-line-strong bg-surface p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={cx(
+            "rounded-md font-semibold transition-colors",
+            size === "md" ? "px-3.5 py-1.5 text-sm" : "px-3 py-1 text-xs",
+            value === o.value ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Amber section eyebrow with the little underline dash from the statements.
  * The one heading style used above every section of the app.
