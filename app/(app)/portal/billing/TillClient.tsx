@@ -21,6 +21,7 @@ import {
   Field,
   IconButton,
   Input,
+  PageHeader,
   Select,
   Switch,
   Textarea,
@@ -290,8 +291,39 @@ export default function TillClient({
 
   const empty = lines.length === 0;
 
+  const mode: "wholesale" | "pos" = segment === "online" ? "wholesale" : "pos";
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
+    <div>
+      <PageHeader
+        title="Billing / POS"
+        actions={
+          <div className="inline-flex items-center rounded-lg border border-line-strong bg-surface p-0.5">
+            <button
+              type="button"
+              onClick={() => setSegment("online")}
+              className={cx(
+                "rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors",
+                mode === "wholesale" ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
+              )}
+            >
+              Wholesale invoice
+            </button>
+            <button
+              type="button"
+              onClick={() => setSegment("shop")}
+              className={cx(
+                "rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors",
+                mode === "pos" ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
+              )}
+            >
+              POS (instant sale)
+            </button>
+          </div>
+        }
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
       {/* ---------------------------------------------------------------- */}
       {/* Left: search + cart                                              */}
       {/* ---------------------------------------------------------------- */}
@@ -696,6 +728,7 @@ export default function TillClient({
           has been raised and stock updated.
         </p>
       </Modal>
+      </div>
     </div>
   );
 }

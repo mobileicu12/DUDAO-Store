@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getSettings } from "@/lib/settings";
 import TillClient from "./TillClient";
 
-export const metadata: Metadata = { title: "Till" };
+export const metadata: Metadata = { title: "Billing" };
 export const dynamic = "force-dynamic";
 
 export default async function BillingPage() {
