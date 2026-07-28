@@ -17,13 +17,13 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   cx,
   Field,
   IconButton,
   Input,
   PageHeader,
   Select,
-  Switch,
   Textarea,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
@@ -62,6 +62,9 @@ export default function TillClient({
   const [segment, setSegment] = useState<SegmentKey>("shop");
   const [taxable, setTaxable] = useState(true);
   const [discount, setDiscount] = useState("");
+  const [discountType, setDiscountType] = useState<"fixed" | "pct">("fixed");
+  const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
+  const [received, setReceived] = useState("");
   const [notes, setNotes] = useState("");
 
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
@@ -188,16 +191,30 @@ export default function TillClient({
 
   // Same function the server uses to total the saved invoice, so what staff
   // read out at the counter is exactly what gets charged.
+  // A percentage discount is resolved to a cash amount before it reaches the
+  // totals or the API — the server only ever stores a fixed amount.
+  const subtotalRaw = useMemo(
+    () => lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0),
+    [lines],
+  );
+  const discountAmt = useMemo(() => {
+    const n = Number(discount) || 0;
+    if (n <= 0) return 0;
+    return discountType === "pct"
+      ? Math.round(subtotalRaw * Math.min(n, 100)) / 100
+      : Math.min(n, subtotalRaw);
+  }, [discount, discountType, subtotalRaw]);
+
   const totals = useMemo(
     () =>
       computeTotals({
         lines,
-        discount: Number(discount) || 0,
+        discount: discountAmt,
         taxable,
         taxRate,
         paid: 0,
       }),
-    [lines, discount, taxable, taxRate],
+    [lines, discountAmt, taxable, taxRate],
   );
 
   /* ---------------------------------------------------------------------- */
@@ -233,6 +250,7 @@ export default function TillClient({
   const complete = async (
     payment: { amount: number; method: PaymentMethod } | null,
     override = false,
+    surplus = 0,
   ) => {
     setBusy(true);
     try {
@@ -252,7 +270,7 @@ export default function TillClient({
           walkInPhone,
           segment,
           taxable,
-          discount: Number(discount) || 0,
+          discount: discountAmt,
           notes,
           payment,
           override,
@@ -266,18 +284,33 @@ export default function TillClient({
       if (res.status === 409 && !override) {
         setBusy(false);
         if (window.confirm(`${body.error}\n\nBill this customer anyway?`)) {
-          await complete(payment, true);
+          await complete(payment, true, surplus);
         }
         return;
       }
 
       if (!res.ok) throw new Error(body.error ?? "That sale was not completed.");
 
+      // Money received beyond this bill's total settles older invoices on the
+      // account, oldest first — the double-counting guard from the reference.
+      if (surplus > 0 && customer) {
+        await fetch(`/api/customers/${customer.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: surplus,
+            method: payMethod,
+            note: `Overpayment on ${body.number}`,
+          }),
+        }).catch(() => {});
+      }
+
       setDone({ id: body.id, number: body.number });
       setPayOpen(false);
       // Clear down ready for the next customer.
       setLines([]);
       setDiscount("");
+      setReceived("");
       setNotes("");
       setCustomer(null);
       setWalkInName("");
@@ -292,6 +325,27 @@ export default function TillClient({
   const empty = lines.length === 0;
 
   const mode: "wholesale" | "pos" = segment === "online" ? "wholesale" : "pos";
+
+  // Inline submit — no modal. POS completes immediately with the chosen method;
+  // a wholesale invoice is a draft, optionally with money received on account.
+  const submit = async () => {
+    if (empty) return;
+    if (mode === "pos") {
+      await complete({ amount: totals.total, method: payMethod });
+      return;
+    }
+    const rec = Number(received) || 0;
+    if (customer && rec > 0) {
+      const applied = Math.min(rec, totals.total);
+      const surplus = Math.max(0, Math.round((rec - totals.total) * 100) / 100);
+      await complete(applied > 0 ? { amount: applied, method: payMethod } : null, false, surplus);
+    } else {
+      await complete(null);
+    }
+  };
+
+  const oldOutstanding = customer?.outstanding ?? 0;
+  const newOutstanding = Math.max(0, oldOutstanding + totals.total - (Number(received) || 0));
 
   return (
     <div>
@@ -585,20 +639,41 @@ export default function TillClient({
 
         <Card>
           <div className="space-y-3">
-            <Switch
+            <Checkbox
               checked={taxable}
               onChange={setTaxable}
-              label={`Add tax (${taxRate}%)`}
+              label={`Charge VAT (${taxRate}%)`}
             />
             <Field label="Discount">
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
-                placeholder="0.00"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  placeholder="0.00"
+                  className="flex-1"
+                />
+                <div className="flex h-9 shrink-0 items-center rounded-md border border-line-strong bg-surface p-0.5">
+                  {(["pct", "fixed"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setDiscountType(t)}
+                      className={cx(
+                        "rounded px-2.5 py-1 text-xs font-semibold transition-colors",
+                        discountType === t ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
+                      )}
+                    >
+                      {t === "pct" ? "%" : "£"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {discountAmt > 0 && (
+                <p className="mt-1 text-xs text-muted">= {money(discountAmt, currency)} off</p>
+              )}
             </Field>
             <Field label="Notes">
               <Textarea
@@ -643,16 +718,85 @@ export default function TillClient({
             </div>
           </dl>
 
+          {/* How the sale was paid — POS completes on the spot. */}
+          {mode === "pos" && (
+            <div className="mt-4">
+              <p className="mb-1.5 text-xs font-medium text-ink-2">Paid by</p>
+              <div className="flex rounded-md border border-line-strong p-0.5">
+                {(["cash", "card", "bank"] as PaymentMethod[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPayMethod(m)}
+                    className={cx(
+                      "flex-1 rounded px-2 py-1.5 text-xs font-semibold capitalize transition-colors",
+                      payMethod === m ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Account panel — money can be taken against a registered account. */}
+          {customer && (
+            <div className="mt-4 space-y-2 rounded-lg border border-accent/40 bg-accent-subtle/60 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted">Old outstanding</span>
+                <span className="tnum font-medium text-ink">{money(oldOutstanding, currency)}</span>
+              </div>
+              <div className="flex justify-between font-medium text-ink">
+                <span>Total due</span>
+                <span className="tnum">{money(oldOutstanding + totals.total, currency)}</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <span className="shrink-0 text-xs text-muted">Received £</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={received}
+                  onChange={(e) => setReceived(e.target.value)}
+                  placeholder="0.00"
+                  className="h-8 w-24"
+                />
+                <button
+                  type="button"
+                  onClick={() => setReceived((oldOutstanding + totals.total).toFixed(2))}
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  pay all
+                </button>
+              </div>
+              <div className="flex justify-between border-t border-accent/30 pt-2 text-base font-semibold">
+                <span className="text-ink-2">New outstanding</span>
+                <span className={cx("tnum", newOutstanding > 0 ? "text-danger" : "text-success")}>
+                  {money(newOutstanding, currency)}
+                </span>
+              </div>
+            </div>
+          )}
+
           <Button
             variant="primary"
             size="lg"
             full
             className="mt-4"
             disabled={empty}
-            onClick={() => setPayOpen(true)}
+            loading={busy}
+            onClick={submit}
           >
-            Take payment
+            {mode === "pos"
+              ? `Charge ${money(totals.total, currency)} & complete`
+              : "Create invoice"}
           </Button>
+          <p className="mt-2 text-xs text-faint">
+            {mode === "pos"
+              ? "Completes the sale immediately and deducts stock."
+              : "Creates a draft invoice you can send or take payment on later."}
+          </p>
         </Card>
       </div>
 
