@@ -39,8 +39,8 @@ export const NAV: NavItem[] = [
 
   {
     href: "/portal/billing",
-    label: "Till",
-    short: "Till",
+    label: "Billing",
+    short: "Bill",
     icon: "M3.5 7.5h17l-1.2 11a1.5 1.5 0 0 1-1.5 1.35H6.2a1.5 1.5 0 0 1-1.5-1.35zM8.5 7.5V6a3.5 3.5 0 0 1 7 0v1.5",
     group: "Sell",
     perm: "billing",
@@ -81,6 +81,13 @@ export const NAV: NavItem[] = [
     perm: "inventory",
   },
   {
+    href: "/portal/products/new",
+    label: "Add Product",
+    icon: "M12 5v14M5 12h14",
+    group: "Catalog",
+    perm: "inventory",
+  },
+  {
     href: "/portal/collections",
     label: "Collections",
     icon: "M4 6.5h7v5H4zM13 6.5h7v5h-7zM4 13.5h7v5H4zM13 13.5h7v5h-7z",
@@ -89,18 +96,25 @@ export const NAV: NavItem[] = [
   },
   {
     href: "/portal/import-export",
-    label: "Import & export",
+    label: "Import / Export",
     icon: "M12 3.5v10m0 0 3.5-3.5M12 13.5 8.5 10M4.5 15.5v3a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-3",
     group: "Catalog",
     perm: "inventory",
   },
-
   {
     href: "/portal/channels",
     label: "Channels",
     icon: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM3.5 12h17M12 3.5c2.2 2.4 3.3 5.3 3.3 8.5s-1.1 6.1-3.3 8.5c-2.2-2.4-3.3-5.3-3.3-8.5S9.8 5.9 12 3.5z",
-    group: "Admin",
+    group: "Catalog",
     perm: null,
+  },
+
+  {
+    href: "/portal/settings",
+    label: "Settings",
+    icon: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V20a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H4a2 2 0 1 1 0-4h.11A1.7 1.7 0 0 0 5.67 7.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H10a1.7 1.7 0 0 0 1-1.56V4a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V10a1.7 1.7 0 0 0 1.56 1H20a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49 1.03z",
+    group: "Admin",
+    perm: "settings",
   },
   {
     href: "/portal/users",
@@ -108,13 +122,6 @@ export const NAV: NavItem[] = [
     icon: "M9 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM21 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM1.5 19a4.5 4.5 0 0 1 9 0M13.5 19a4.5 4.5 0 0 1 9 0",
     group: "Admin",
     perm: "users",
-  },
-  {
-    href: "/portal/settings",
-    label: "Settings",
-    icon: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V20a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H4a2 2 0 1 1 0-4h.11A1.7 1.7 0 0 0 5.67 7.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H10a1.7 1.7 0 0 0 1-1.56V4a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V10a1.7 1.7 0 0 0 1.56 1H20a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49 1.03z",
-    group: "Admin",
-    perm: "settings",
   },
 ];
 

@@ -49,22 +49,18 @@ export default function Sidebar() {
                         href={item.href}
                         aria-current={active ? "page" : undefined}
                         className={cx(
-                          "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[0.8125rem] font-medium transition-colors",
+                          "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[0.8125rem] font-medium transition-colors",
                           active
-                            ? "bg-accent-subtle text-accent"
+                            ? "bg-ink text-surface"
                             : "text-ink-2 hover:bg-subtle hover:text-ink",
                         )}
                       >
-                        <span
-                          className={cx(
-                            "absolute inset-y-1 left-0 w-[3px] rounded-r-full bg-accent transition-opacity",
-                            active ? "opacity-100" : "opacity-0",
-                          )}
-                          aria-hidden
-                        />
                         <NavIcon
                           path={item.icon}
-                          className={cx("h-[1.15rem] w-[1.15rem]", !active && "text-faint group-hover:text-ink-2")}
+                          className={cx(
+                            "h-[1.15rem] w-[1.15rem]",
+                            active ? "text-accent" : "text-faint group-hover:text-ink-2",
+                          )}
                         />
                         <span className="truncate">{item.label}</span>
                       </Link>

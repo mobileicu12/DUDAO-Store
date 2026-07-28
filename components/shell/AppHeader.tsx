@@ -5,8 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { titleForPath } from "@/lib/nav";
+import { BUSINESS } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
-import { Badge, Button, cx, IconButton } from "@/components/ui/primitives";
+import { Badge, cx } from "@/components/ui/primitives";
 import ThemeToggle from "@/components/ThemeToggle";
 import TodaySendDrawer from "@/components/TodaySendDrawer";
 import { Logo } from "./Logo";
@@ -75,28 +76,35 @@ export default function AppHeader() {
         <Logo size="sm" />
       </Link>
 
-      <div className="hidden min-w-0 items-center gap-2.5 md:flex">
-        <span className="h-4 w-1 shrink-0 rounded-full bg-accent" aria-hidden />
-        <h1 className="min-w-0 truncate text-[0.95rem] font-semibold tracking-tight text-ink">
+      <div className="hidden min-w-0 items-center gap-2 md:flex">
+        <span className="shrink-0 text-sm font-semibold text-ink-2">
+          {BUSINESS.name}
+        </span>
+        <span className="text-faint" aria-hidden>
+          /
+        </span>
+        <h1 className="min-w-0 truncate text-sm font-semibold text-ink">
           {titleForPath(pathname)}
         </h1>
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-2.5">
         {showReports && (
-          <Button
-            variant="secondary"
-            size="sm"
+          <button
+            type="button"
             onClick={() => setSendOpen(true)}
-            icon={
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M4 6.5h16M4 12h16M4 17.5h10" />
-              </svg>
-            }
+            className="flex h-9 items-center gap-2 rounded-full bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
           >
-            <span className="hidden sm:inline">Today&apos;s send</span>
-          </Button>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 3.5v10m0 0 3.5-3.5M12 13.5 8.5 10M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16" />
+            </svg>
+            <span className="hidden sm:inline">Today&apos;s reports</span>
+          </button>
         )}
+        <span className="hidden items-center gap-1.5 text-xs font-medium text-muted sm:flex">
+          <span className="h-2 w-2 rounded-full bg-success" aria-hidden />
+          Live
+        </span>
         <div className="hidden sm:block">
           <ThemeToggle />
         </div>
