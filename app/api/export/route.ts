@@ -15,8 +15,8 @@ export async function GET(req: Request) {
     const isTemplate = new URL(req.url).searchParams.get("template") === "1";
     const buffer = isTemplate ? await exportTemplate() : await exportCatalog();
     const name = isTemplate
-      ? "dudau-product-template.xlsx"
-      : `dudau-catalog-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      ? "dudao-product-template.xlsx"
+      : `dudao-catalog-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
     return new NextResponse(new Uint8Array(buffer), {
       headers: {

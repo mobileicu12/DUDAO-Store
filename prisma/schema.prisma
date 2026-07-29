@@ -1,4 +1,4 @@
-// DUDAU trade portal — data model.
+// DUDAO trade portal — data model.
 //
 // This replaces the Shopify Admin API as the system of record. Everything the
 // business owns lives here: catalog, customers, the payment ledger, invoices,
@@ -23,7 +23,7 @@ model Setting {
   id Int @id @default(1)
 
   // Business identity — printed on every document
-  name          String @default("DUDAU")
+  name          String @default("DUDAO")
   tagline       String @default("Trade counter & wholesale")
   address       String @default("")
   email         String @default("")

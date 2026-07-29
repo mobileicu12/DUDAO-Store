@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 export type ThemeChoice = "light" | "dark" | "system";
 
-export const THEME_KEY = "dudau-theme";
+export const THEME_KEY = "dudao-theme";
 
 /**
  * Inlined into <head> so the .dark class is on <html> before the browser paints.

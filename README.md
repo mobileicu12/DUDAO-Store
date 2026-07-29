@@ -1,4 +1,4 @@
-# DUDAU — trade counter portal
+# DUDAO — trade counter portal
 
 Staff back-office for a trade counter business: point-of-sale billing,
 invoicing, a customer payment ledger, inventory with multi-tier pricing, and
@@ -113,7 +113,7 @@ database to connect to otherwise. In the Vercel project, under
 | `AUTH_SECRET` | **yes** | `openssl rand -base64 32` |
 | `PORTAL_OWNER_EMAIL` | **yes** | Your email. Comma-separate for more than one owner. |
 | `PORTAL_SESSION_SECRET` | **yes** | `openssl rand -base64 32`. Signs share links and is the master password. |
-| `NEXT_PUBLIC_SITE_URL` | recommended | Your deployed URL, e.g. `https://dudau.vercel.app`. Needed for share links in messages. |
+| `NEXT_PUBLIC_SITE_URL` | recommended | Your deployed URL, e.g. `https://dudao.vercel.app`. Needed for share links in messages. |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | optional | Only if you want Google sign-in. Without them, email + password works. |
 | `RESEND_API_KEY` / `EMAIL_FROM` | optional | Enables emailing invoices. Send buttons hide when unset. |
 | `CRON_SECRET` | optional | Bearer token the daily-digest cron must present. |

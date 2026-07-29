@@ -11,7 +11,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * Only node:crypto is imported here — proxy.ts depends on this file.
  */
 
-export const MASTER_COOKIE = "dudau_master";
+export const MASTER_COOKIE = "dudao_master";
 
 const secret = (): string => process.env.PORTAL_SESSION_SECRET ?? "";
 

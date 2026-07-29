@@ -140,7 +140,7 @@ export default function SettingsClient() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `dudau-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `dudao-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Backup downloaded.");

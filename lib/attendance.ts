@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "./db";
 
 /** Cookie holding the date the caller last tapped in (YYYY-MM-DD). */
-export const TAPIN_COOKIE = "dudau_tapin";
+export const TAPIN_COOKIE = "dudao_tapin";
 
 /**
  * Staff time-clock (tap in / tap out).

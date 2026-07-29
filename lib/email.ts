@@ -11,7 +11,7 @@ import { Resend } from "resend";
  */
 
 const apiKey = process.env.RESEND_API_KEY ?? "";
-const from = process.env.EMAIL_FROM ?? "DUDAU <onboarding@resend.dev>";
+const from = process.env.EMAIL_FROM ?? "DUDAO <onboarding@resend.dev>";
 
 export function emailConfigured(): boolean {
   return apiKey.length > 0;

@@ -37,7 +37,7 @@ function styleSheet(sheet: ExcelJS.Worksheet): void {
 
 export async function exportCatalog(): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "DUDAU portal";
+  workbook.creator = "DUDAO portal";
   workbook.created = new Date();
 
   const sheet = workbook.addWorksheet("Products");

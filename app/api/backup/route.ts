@@ -48,7 +48,7 @@ export async function GET() {
     return new NextResponse(JSON.stringify(snapshot, null, 2), {
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="dudau-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+        "Content-Disposition": `attachment; filename="dudao-backup-${new Date().toISOString().slice(0, 10)}.json"`,
         "Cache-Control": "no-store",
       },
     });

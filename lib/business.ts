@@ -58,7 +58,7 @@ const splitAddress = (raw: string): string[] =>
     .filter(Boolean);
 
 export const BUSINESS: Business = {
-  name: env("NEXT_PUBLIC_BIZ_NAME", "DUDAU"),
+  name: env("NEXT_PUBLIC_BIZ_NAME", "DUDAO"),
   tagline: env("NEXT_PUBLIC_BIZ_TAGLINE", "Trade counter & wholesale"),
   addressLines: splitAddress(env("NEXT_PUBLIC_BIZ_ADDRESS", "United Kingdom")),
   email: env("NEXT_PUBLIC_BIZ_EMAIL", ""),
@@ -72,7 +72,7 @@ export const BUSINESS: Business = {
   taxRate: Number(env("NEXT_PUBLIC_TAX_RATE", "20")) || 0,
 };
 
-/** Initials for the logo mark — "DUDAU" -> "DU", "Acme Trade Co" -> "AT". */
+/** Initials for the logo mark — "DUDAO" -> "DU", "Acme Trade Co" -> "AT". */
 export const businessMark = (name: string = BUSINESS.name): string => {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "??";

@@ -49,7 +49,7 @@ export type PortalSettings = {
 };
 
 export const DEFAULT_SETTINGS: PortalSettings = {
-  name: "DUDAU",
+  name: "DUDAO",
   tagline: "Trade counter & wholesale",
   address: "",
   email: "",

@@ -1,7 +1,7 @@
 -- CreateTable
 CREATE TABLE "Setting" (
     "id" INTEGER NOT NULL DEFAULT 1,
-    "name" TEXT NOT NULL DEFAULT 'DUDAU',
+    "name" TEXT NOT NULL DEFAULT 'DUDAO',
     "tagline" TEXT NOT NULL DEFAULT 'Trade counter & wholesale',
     "address" TEXT NOT NULL DEFAULT '',
     "email" TEXT NOT NULL DEFAULT '',
