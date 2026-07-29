@@ -59,7 +59,11 @@ export default function TillClient({
   const router = useRouter();
 
   const [lines, setLines] = useState<CartLine[]>([]);
-  const [segment, setSegment] = useState<SegmentKey>("shop");
+  // Mode (the flow) and segment (the source/pricing channel) are independent —
+  // a wholesale invoice can be recorded against any source, and changing the
+  // Source never flips the mode.
+  const [mode, setMode] = useState<"wholesale" | "pos">("wholesale");
+  const [segment, setSegment] = useState<SegmentKey>("online");
   const [taxable, setTaxable] = useState(true);
   const [discount, setDiscount] = useState("");
   const [discountType, setDiscountType] = useState<"fixed" | "pct">("fixed");
@@ -120,13 +124,16 @@ export default function TillClient({
   /* Cart                                                                    */
   /* ---------------------------------------------------------------------- */
 
+  // Wholesale pricing is driven by the MODE, not by whether a customer is
+  // attached: a wholesale invoice uses the wholesale tier; POS uses the source
+  // tier. Wholesale still beats the channel tier when both apply.
   const priceFor = useCallback(
     (base: number, tiers: TierPrices) =>
       priceForContext(base, tiers, {
-        wholesale: Boolean(customer),
+        wholesale: mode === "wholesale",
         segment,
       }),
-    [customer, segment],
+    [mode, segment],
   );
 
   const addProduct = useCallback(
@@ -324,12 +331,26 @@ export default function TillClient({
 
   const empty = lines.length === 0;
 
-  const mode: "wholesale" | "pos" = segment === "online" ? "wholesale" : "pos";
-
   // Inline submit — no modal. POS completes immediately with the chosen method;
   // a wholesale invoice is a draft, optionally with money received on account.
   const submit = async () => {
     if (empty) return;
+    // Wholesale invoices are for registered trade (seg:online) accounts, as in
+    // the reference — otherwise steer the user to POS.
+    if (mode === "wholesale") {
+      if (!customer) {
+        toast.error(
+          "Wholesale invoices are for registered customers — pick a customer, or switch to POS for a walk-in.",
+        );
+        return;
+      }
+      if (!customer.segments.includes("online")) {
+        toast.error(
+          "Wholesale is for Online / Registered customers. Set this customer's segment to Online, or use POS.",
+        );
+        return;
+      }
+    }
     if (mode === "pos") {
       await complete({ amount: totals.total, method: payMethod });
       return;
@@ -355,7 +376,10 @@ export default function TillClient({
           <div className="inline-flex items-center rounded-lg border border-line-strong bg-surface p-0.5">
             <button
               type="button"
-              onClick={() => setSegment("online")}
+              onClick={() => {
+                setMode("wholesale");
+                setSegment("online");
+              }}
               className={cx(
                 "rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors",
                 mode === "wholesale" ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
@@ -365,7 +389,10 @@ export default function TillClient({
             </button>
             <button
               type="button"
-              onClick={() => setSegment("shop")}
+              onClick={() => {
+                setMode("pos");
+                setSegment("shop");
+              }}
               className={cx(
                 "rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors",
                 mode === "pos" ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
@@ -577,7 +604,14 @@ export default function TillClient({
       {/* ---------------------------------------------------------------- */}
       <div className="space-y-3">
         <Card>
-          <Field label="Source" hint="Changing this re-prices the whole bill.">
+          <Field
+            label="Source"
+            hint={
+              mode === "wholesale"
+                ? "Wholesale invoice — prices use the Wholesale tier. Blank tiers fall back to the base price."
+                : `Prices use the ${SEGMENTS.find((s) => s.key === segment)?.label ?? segment} tier. Blank tiers fall back to the base price.`
+            }
+          >
             <Select
               value={segment}
               onChange={(e) => setSegment(e.target.value as SegmentKey)}
