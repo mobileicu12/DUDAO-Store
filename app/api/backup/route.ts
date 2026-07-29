@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requireOwner } from "@/lib/guard";
-import { db } from "@/lib/db";
-import { getSettings, getIntegrations } from "@/lib/settings";
+import { buildBackupSnapshot } from "@/lib/backup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,28 +21,7 @@ export async function GET() {
   if (denied) return denied;
 
   try {
-    const [settings, integrations, products, collections, customers, invoices] =
-      await Promise.all([
-        getSettings(),
-        getIntegrations(),
-        db.product.findMany({ include: { images: true, collections: true } }),
-        db.collection.findMany(),
-        db.customer.findMany({ include: { payments: true } }),
-        db.invoice.findMany({ include: { lines: true, payments: true } }),
-      ]);
-
-    const snapshot = {
-      version: 1,
-      generatedAt: new Date().toISOString(),
-      settings,
-      // Secrets are included deliberately — a backup you cannot restore
-      // credentials from is not a backup. Owner-only, never cached.
-      integrations,
-      products,
-      collections,
-      customers,
-      invoices,
-    };
+    const snapshot = await buildBackupSnapshot();
 
     return new NextResponse(JSON.stringify(snapshot, null, 2), {
       headers: {

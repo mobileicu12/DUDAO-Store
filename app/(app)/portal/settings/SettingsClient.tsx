@@ -149,6 +149,21 @@ export default function SettingsClient() {
     }
   };
 
+  const [driveBusy, setDriveBusy] = useState(false);
+  const backupToDrive = async () => {
+    setDriveBusy(true);
+    try {
+      const res = await fetch("/api/cron/backup-drive", { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; file?: string };
+      if (!res.ok) throw new Error(body.error ?? "The Drive backup did not run.");
+      toast.success(`Backed up to Google Drive: ${body.file ?? "done"}.`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setDriveBusy(false);
+    }
+  };
+
   if (loading || !settings) {
     return (
       <div className="space-y-3">
@@ -425,9 +440,16 @@ export default function SettingsClient() {
               Keep a copy — a normal database export from your host is not a
               substitute for this if you ever need to read the numbers back.
             </p>
-            <Button className="mt-3" onClick={backup}>
-              Download full backup
-            </Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button onClick={backup}>Download full backup</Button>
+              <Button variant="secondary" loading={driveBusy} onClick={backupToDrive}>
+                Back up to Google Drive now
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              A dated snapshot is also saved to your Google Drive automatically
+              every night once Drive backup is configured.
+            </p>
           </Card>
         )}
       </div>
