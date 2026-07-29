@@ -324,17 +324,21 @@ export default function AppHeader() {
 export function AppFooter() {
   const year = new Date().getFullYear();
   return (
-    <footer className="no-print px-4 pt-2 pb-6 text-center text-xs text-faint sm:px-6">
-      <FooterName /> · {year}
+    <footer className="no-print hidden shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-line bg-surface px-8 py-2.5 text-xs text-muted md:flex">
+      <span>
+        © {year} {BUSINESS.name}. All rights reserved.
+      </span>
+      <span className="text-muted/70">
+        Developed &amp; managed by Kuldeep J @{" "}
+        <a
+          href="https://share.google/n242crm1dbgPcKwF4"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-ink underline decoration-dotted underline-offset-2 transition-colors hover:text-accent"
+        >
+          RD-IT-Lab
+        </a>
+      </span>
     </footer>
   );
-}
-
-function FooterName() {
-  const { me } = useMe();
-  // Kept as a component so the footer re-renders with live business details
-  // once settings load, without turning the footer into a client boundary of
-  // its own.
-  void me;
-  return <span>{process.env.NEXT_PUBLIC_BIZ_NAME || "DUDAU"}</span>;
 }
