@@ -689,6 +689,43 @@ export async function listInvoices(args: InvoiceListArgs) {
   };
 }
 
+export type StaffSummary = {
+  email: string;
+  name: string;
+  count: number;
+  total: number;
+  paid: number;
+  open: number;
+};
+
+/**
+ * Sales grouped by the staff member who raised each invoice. Paid is the value
+ * of settled bills; open is everything not yet paid. Together they make up the
+ * total, so a member's numbers always reconcile.
+ */
+export function summarizeByStaff(invoices: InvoiceRecord[]): StaffSummary[] {
+  const map = new Map<string, StaffSummary>();
+  for (const inv of invoices) {
+    const key = inv.staffEmail || "unattributed";
+    const row =
+      map.get(key) ??
+      ({
+        email: key,
+        name: inv.staffName || "Unattributed",
+        count: 0,
+        total: 0,
+        paid: 0,
+        open: 0,
+      } satisfies StaffSummary);
+    row.count += 1;
+    row.total = money2(row.total + inv.totals.total);
+    if (inv.status === "PAID") row.paid = money2(row.paid + inv.totals.total);
+    else row.open = money2(row.open + inv.totals.total);
+    map.set(key, row);
+  }
+  return [...map.values()].sort((a, b) => b.total - a.total);
+}
+
 /** Day boundaries in server local time — the shop's day, not UTC's. */
 export function dayRange(date = new Date()): { start: Date; end: Date } {
   const start = new Date(date);

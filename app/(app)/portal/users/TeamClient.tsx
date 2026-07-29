@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { PERMISSIONS, type PermKey } from "@/lib/permissions";
 import type { PublicUser } from "@/lib/portal-users";
+import { money } from "@/lib/business";
 import { refreshMe, useMe } from "@/lib/use-me";
+
+type StaffRow = {
+  email: string;
+  name: string;
+  count: number;
+  total: number;
+  paid: number;
+  open: number;
+};
 import {
   Alert,
   Badge,
@@ -15,6 +25,7 @@ import {
   Field,
   Input,
   PageHeader,
+  SectionLabel,
   Skeleton,
 } from "@/components/ui/primitives";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
@@ -30,6 +41,16 @@ export default function TeamClient() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [removing, setRemoving] = useState<PublicUser | null>(null);
   const [busy, setBusy] = useState(false);
+  const [byStaff, setByStaff] = useState<StaffRow[]>([]);
+
+  // Owner-only: how much each member has taken. A member never sees this.
+  useEffect(() => {
+    if (me?.role !== "owner") return;
+    fetch("/api/reports/team", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { byStaff: [] }))
+      .then((d: { byStaff: StaffRow[] }) => setByStaff(d.byStaff))
+      .catch(() => {});
+  }, [me?.role]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -161,6 +182,41 @@ export default function TeamClient() {
           ))
         )}
       </div>
+
+      {/* Owner-only: how much each member has taken. */}
+      {me?.role === "owner" && byStaff.length > 0 && (
+        <div className="mt-8">
+          <SectionLabel>Sales by staff</SectionLabel>
+          <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+            <table className="w-full text-sm">
+              <thead className="border-b border-line bg-subtle text-left text-xs font-semibold text-ink-2">
+                <tr>
+                  <th className="px-4 py-2.5">Staff</th>
+                  <th className="px-4 py-2.5 text-right">Invoices</th>
+                  <th className="px-4 py-2.5 text-right">Total</th>
+                  <th className="px-4 py-2.5 text-right">Paid</th>
+                  <th className="px-4 py-2.5 text-right">Open</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {byStaff.map((s) => (
+                  <tr key={s.email}>
+                    <td className="px-4 py-2.5 font-medium text-ink">{s.name}</td>
+                    <td className="tnum px-4 py-2.5 text-right text-muted">{s.count}</td>
+                    <td className="tnum px-4 py-2.5 text-right text-ink">{money(s.total)}</td>
+                    <td className="tnum px-4 py-2.5 text-right text-success">{money(s.paid)}</td>
+                    <td className="tnum px-4 py-2.5 text-right">
+                      <span className={s.open > 0 ? "font-medium text-warning" : "text-muted"}>
+                        {money(s.open)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <MemberModal
         open={inviteOpen || editing !== null}
