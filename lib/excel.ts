@@ -1,6 +1,6 @@
 import "server-only";
 import ExcelJS from "exceljs";
-import { db, money2, slugify, uniqueHandle } from "./db";
+import { db, money2, slugify } from "./db";
 import { EXPORT_COLUMNS } from "./products";
 import { tierNum } from "./pricing";
 
@@ -203,20 +203,71 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
     collections.map((c) => [c.title.toLowerCase(), c.id]),
   );
 
+  // Run `worker` over `items` with at most `size` in flight. JS stays
+  // single-threaded, so the per-item bookkeeping below is race-free; the
+  // concurrency only overlaps the network latency of the DB round trips.
+  const mapPool = async <T>(
+    items: T[],
+    size: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> => {
+    let cursorPool = 0;
+    const runners = Array.from({ length: Math.min(size, items.length) }, async () => {
+      while (cursorPool < items.length) {
+        const item = items[cursorPool++];
+        await worker(item);
+      }
+    });
+    await Promise.all(runners);
+  };
+
+  const chunk = <T>(arr: T[], n: number): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  };
+
+  type ProductData = {
+    title: string;
+    brand: string;
+    model: string;
+    productType: string;
+    vendor: string;
+    tags: string[];
+    sku: string;
+    barcode: string;
+    price: number;
+    compareAtPrice: number | null;
+    priceWholesale: number | null;
+    priceShop: number | null;
+    priceEbay: number | null;
+    priceAmazon: number | null;
+    stock: number;
+    status: string;
+  };
+  type Parsed = {
+    row: number;
+    title: string;
+    handleGiven: string;
+    data: ProductData;
+    imageUrl: string;
+    collectionNames: string[];
+  };
+
+  /* -- Phase 1: parse every row in memory (no DB work) -------------------- */
+  const parsed: Parsed[] = [];
   for (let r = 2; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
     const title = cellString(get(row, "title"));
-    const handle = cellString(get(row, "handle"));
+    const handleGiven = cellString(get(row, "handle"));
 
     // Wholly blank rows are normal at the end of a sheet.
-    if (!title && !handle) {
-      continue;
-    }
+    if (!title && !handleGiven) continue;
 
     if (!title) {
       results.push({
         row: r,
-        title: handle || "(no title)",
+        title: handleGiven || "(no title)",
         ok: false,
         action: "failed",
         error: "No product name in this row.",
@@ -225,13 +276,16 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
       continue;
     }
 
-    try {
-      const price = cellNumber(get(row, "price"));
-      const statusRaw = cellString(get(row, "status")).toUpperCase();
-      const status =
-        statusRaw === "DRAFT" || statusRaw === "ARCHIVED" ? statusRaw : "ACTIVE";
+    const price = cellNumber(get(row, "price"));
+    const statusRaw = cellString(get(row, "status")).toUpperCase();
+    const status =
+      statusRaw === "DRAFT" || statusRaw === "ARCHIVED" ? statusRaw : "ACTIVE";
 
-      const data = {
+    parsed.push({
+      row: r,
+      title,
+      handleGiven,
+      data: {
         title,
         brand: cellString(get(row, "brand")),
         model: cellString(get(row, "model")),
@@ -251,97 +305,178 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
         priceAmazon: tierNum(cellNumber(get(row, "priceAmazon"))),
         stock: Math.max(0, Math.round(cellNumber(get(row, "stock")) ?? 0)),
         status,
-      };
+      },
+      imageUrl: cellString(get(row, "imageUrl")),
+      collectionNames: cellString(get(row, "collections"))
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean),
+    });
+  }
 
-      const existing = handle
-        ? await db.product.findUnique({ where: { handle }, select: { id: true } })
-        : null;
+  /* -- Phase 2: resolve update targets and handle uniqueness (2 queries) -- */
+  const givenHandles = [...new Set(parsed.map((p) => p.handleGiven).filter(Boolean))];
+  const existingByHandle = new Map<string, string>();
+  for (const part of chunk(givenHandles, 500)) {
+    const rows = await db.product.findMany({
+      where: { handle: { in: part } },
+      select: { id: true, handle: true },
+    });
+    for (const row of rows) existingByHandle.set(row.handle, row.id);
+  }
 
-      if (handle && !existing) {
-        // A handle that does not exist is more likely a typo than an intent to
-        // create, so say so rather than silently making a duplicate.
+  // Every handle already in use, so new products get a collision-free one
+  // without a per-row round trip (the sequential equivalent of uniqueHandle).
+  const handleSet = new Set(
+    (await db.product.findMany({ select: { handle: true } })).map((h) => h.handle),
+  );
+  const freshHandle = (title: string): string => {
+    const base = slugify(title);
+    let candidate = base;
+    for (let i = 2; handleSet.has(candidate); i++) candidate = `${base}-${i}`;
+    handleSet.add(candidate);
+    return candidate;
+  };
+
+  /* -- Phase 3: partition into updates / creates / typo failures --------- */
+  const toUpdate: { p: Parsed; id: string }[] = [];
+  const toCreate: { p: Parsed; handle: string; failed?: boolean }[] = [];
+  for (const p of parsed) {
+    if (p.handleGiven) {
+      const id = existingByHandle.get(p.handleGiven);
+      if (!id) {
+        // A handle that does not exist is more likely a typo than an intent
+        // to create, so say so rather than silently making a duplicate.
         results.push({
-          row: r,
-          title,
+          row: p.row,
+          title: p.title,
           ok: false,
           action: "failed",
-          error: `No product with handle "${handle}". Clear the handle to create a new one.`,
+          error: `No product with handle "${p.handleGiven}". Clear the handle to create a new one.`,
         });
         failed++;
         continue;
       }
-
-      const productId = existing
-        ? (
-            await db.product.update({
-              where: { id: existing.id },
-              data,
-              select: { id: true },
-            })
-          ).id
-        : (
-            await db.product.create({
-              data: {
-                ...data,
-                handle: await uniqueHandle("product", title),
-              },
-              select: { id: true },
-            })
-          ).id;
-
-      const imageUrl = cellString(get(row, "imageUrl"));
-      if (imageUrl) {
-        await db.productImage.deleteMany({ where: { productId } });
-        await db.productImage.create({
-          data: { productId, url: imageUrl, position: 0 },
-        });
-      }
-
-      const collectionNames = cellString(get(row, "collections"))
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
-
-      if (collectionNames.length > 0) {
-        for (const name of collectionNames) {
-          let collectionId = collectionByName.get(name.toLowerCase());
-          if (!collectionId) {
-            const fresh = await db.collection.create({
-              data: { title: name, handle: slugify(name) + "-" + Date.now().toString(36) },
-              select: { id: true },
-            });
-            collectionId = fresh.id;
-            collectionByName.set(name.toLowerCase(), collectionId);
-          }
-          await db.collectionProduct.createMany({
-            data: [{ collectionId, productId }],
-            skipDuplicates: true,
-          });
-        }
-      }
-
-      results.push({
-        row: r,
-        title,
-        ok: true,
-        action: existing ? "updated" : "created",
-      });
-      if (existing) updated++;
-      else created++;
-    } catch (err) {
-      results.push({
-        row: r,
-        title,
-        ok: false,
-        action: "failed",
-        error:
-          err instanceof Error
-            ? err.message.slice(0, 200)
-            : "Something went wrong on this row.",
-      });
-      failed++;
+      toUpdate.push({ p, id });
+    } else {
+      toCreate.push({ p, handle: freshHandle(p.title) });
     }
   }
 
+  /* -- Phase 4: pre-create any missing collections (batched) ------------- */
+  const neededNames = new Set<string>();
+  for (const p of parsed) for (const n of p.collectionNames) neededNames.add(n);
+  const missingNames = [...neededNames].filter(
+    (n) => !collectionByName.has(n.toLowerCase()),
+  );
+  if (missingNames.length) {
+    const stamp = Date.now().toString(36);
+    await db.collection.createMany({
+      data: missingNames.map((n, i) => ({
+        title: n,
+        handle: `${slugify(n)}-${stamp}${i}`,
+      })),
+      skipDuplicates: true,
+    });
+    const refreshed = await db.collection.findMany({ select: { id: true, title: true } });
+    for (const c of refreshed) collectionByName.set(c.title.toLowerCase(), c.id);
+  }
+
+  /* -- Phase 5: create products (chunked, with per-row fallback) ---------- */
+  for (const part of chunk(toCreate, 500)) {
+    try {
+      await db.product.createMany({
+        data: part.map((c) => ({ ...c.p.data, handle: c.handle })),
+      });
+      for (const c of part) {
+        results.push({ row: c.p.row, title: c.p.title, ok: true, action: "created" });
+        created++;
+      }
+    } catch {
+      // One bad row would abort the whole chunk — fall back to per-row so the
+      // rest still land and the offender is pinpointed.
+      for (const c of part) {
+        try {
+          await db.product.create({ data: { ...c.p.data, handle: c.handle } });
+          results.push({ row: c.p.row, title: c.p.title, ok: true, action: "created" });
+          created++;
+        } catch (err) {
+          c.failed = true;
+          results.push({
+            row: c.p.row,
+            title: c.p.title,
+            ok: false,
+            action: "failed",
+            error: err instanceof Error ? err.message.slice(0, 200) : "Row failed.",
+          });
+          failed++;
+        }
+      }
+    }
+  }
+
+  // Map the freshly-created handles back to ids for images and collections.
+  const createdHandles = toCreate.filter((c) => !c.failed).map((c) => c.handle);
+  const idByHandle = new Map(existingByHandle);
+  for (const part of chunk(createdHandles, 500)) {
+    const rows = await db.product.findMany({
+      where: { handle: { in: part } },
+      select: { id: true, handle: true },
+    });
+    for (const row of rows) idByHandle.set(row.handle, row.id);
+  }
+
+  /* -- Phase 6: updates (bounded concurrency, per-row isolation) --------- */
+  await mapPool(toUpdate, 15, async (u) => {
+    try {
+      await db.product.update({ where: { id: u.id }, data: u.p.data });
+      results.push({ row: u.p.row, title: u.p.title, ok: true, action: "updated" });
+      updated++;
+    } catch (err) {
+      results.push({
+        row: u.p.row,
+        title: u.p.title,
+        ok: false,
+        action: "failed",
+        error: err instanceof Error ? err.message.slice(0, 200) : "Row failed.",
+      });
+      failed++;
+    }
+  });
+
+  /* -- Phase 7: images and collection links (batched) -------------------- */
+  const withProductId: { p: Parsed; productId: string }[] = [];
+  for (const u of toUpdate) withProductId.push({ p: u.p, productId: u.id });
+  for (const c of toCreate) {
+    if (c.failed) continue;
+    const productId = idByHandle.get(c.handle);
+    if (productId) withProductId.push({ p: c.p, productId });
+  }
+
+  const imaged = withProductId.filter((w) => w.p.imageUrl);
+  if (imaged.length) {
+    const ids = imaged.map((w) => w.productId);
+    for (const part of chunk(ids, 500)) {
+      await db.productImage.deleteMany({ where: { productId: { in: part } } });
+    }
+    for (const part of chunk(imaged, 500)) {
+      await db.productImage.createMany({
+        data: part.map((w) => ({ productId: w.productId, url: w.p.imageUrl, position: 0 })),
+      });
+    }
+  }
+
+  const links: { collectionId: string; productId: string }[] = [];
+  for (const w of withProductId) {
+    for (const name of w.p.collectionNames) {
+      const collectionId = collectionByName.get(name.toLowerCase());
+      if (collectionId) links.push({ collectionId, productId: w.productId });
+    }
+  }
+  for (const part of chunk(links, 1000)) {
+    await db.collectionProduct.createMany({ data: part, skipDuplicates: true });
+  }
+
+  results.sort((a, b) => a.row - b.row);
   return { created, updated, failed, skipped, results };
 }
