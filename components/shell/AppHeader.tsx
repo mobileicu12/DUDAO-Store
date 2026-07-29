@@ -9,15 +9,42 @@ import { BUSINESS } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
 import { Badge, cx } from "@/components/ui/primitives";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useToast } from "@/components/ui/Toast";
 import { Logo } from "./Logo";
 
 export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { me, viaMaster } = useMe();
+  const toast = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
+  const [zipBusy, setZipBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // "Today's reports" downloads one PDF per account customer billed today.
+  const downloadReports = async () => {
+    setZipBusy(true);
+    try {
+      const res = await fetch("/api/reports/today-zip");
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(b.error ?? "Could not build today's reports.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `customer-reports-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not build today's reports.");
+    } finally {
+      setZipBusy(false);
+    }
+  };
 
   // The day-reports shortcut appears only after the owner-configured hour, so
   // it is out of the way in the morning and to hand at close.
@@ -90,13 +117,15 @@ export default function AppHeader() {
         {showReports && (
           <button
             type="button"
-            onClick={() => window.dispatchEvent(new Event("open-today-send"))}
-            className="flex h-9 items-center gap-2 rounded-full bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
+            onClick={downloadReports}
+            disabled={zipBusy}
+            title="Download one PDF per customer for today's sales (ZIP)"
+            className="flex h-9 items-center gap-2 rounded-full bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover disabled:opacity-60"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M12 3.5v10m0 0 3.5-3.5M12 13.5 8.5 10M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16" />
             </svg>
-            <span className="hidden sm:inline">Today&apos;s reports</span>
+            <span className="hidden sm:inline">{zipBusy ? "Zipping…" : "Today's reports"}</span>
           </button>
         )}
         <span className="hidden items-center gap-1.5 text-xs font-medium text-muted sm:flex">
