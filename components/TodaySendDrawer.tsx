@@ -36,18 +36,25 @@ function markSent(id: string, channel: string) {
   localStorage.setItem(sentKey(), JSON.stringify(all));
 }
 
-export default function TodaySendDrawer({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+/** Fire this to open the drawer from anywhere (e.g. a header button). */
+export const OPEN_TODAY_SEND = "open-today-send";
+
+export default function TodaySendDrawer() {
   const toast = useToast();
+  const [open, setOpen] = useState(false);
   const [customers, setCustomers] = useState<TodayCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [sent, setSent] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState<string | null>(null);
+
+  const onClose = useCallback(() => setOpen(false), []);
+
+  // Openable from the header button too, via a window event.
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener(OPEN_TODAY_SEND, handler);
+    return () => window.removeEventListener(OPEN_TODAY_SEND, handler);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,13 +108,26 @@ export default function TodaySendDrawer({
   };
 
   return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      title="Today's send"
-      subtitle="Send each account their day summary, one at a time."
-      width="md"
-    >
+    <>
+      {/* Always-visible right-edge tab, as in the reference. */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Today's sending"
+        aria-label="Today's sending"
+        className="no-print fixed top-1/3 right-0 z-30 flex items-center rounded-l-lg border border-r-0 border-line bg-surface py-3 pr-1.5 pl-2 text-xs font-semibold text-ink-2 shadow-lg transition-colors hover:bg-subtle hover:text-ink"
+        style={{ writingMode: "vertical-rl" }}
+      >
+        <span className="rotate-180">📤 Today&apos;s sending</span>
+      </button>
+
+      <Drawer
+        open={open}
+        onClose={onClose}
+        title="Today's send"
+        subtitle="Send each account their day summary, one at a time."
+        width="md"
+      >
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -171,6 +191,7 @@ export default function TodaySendDrawer({
             })}
         </ul>
       )}
-    </Drawer>
+      </Drawer>
+    </>
   );
 }

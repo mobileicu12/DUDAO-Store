@@ -9,7 +9,6 @@ import { BUSINESS } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
 import { Badge, cx } from "@/components/ui/primitives";
 import ThemeToggle from "@/components/ThemeToggle";
-import TodaySendDrawer from "@/components/TodaySendDrawer";
 import { Logo } from "./Logo";
 
 export default function AppHeader() {
@@ -17,7 +16,6 @@ export default function AppHeader() {
   const router = useRouter();
   const { me, viaMaster } = useMe();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -92,7 +90,7 @@ export default function AppHeader() {
         {showReports && (
           <button
             type="button"
-            onClick={() => setSendOpen(true)}
+            onClick={() => window.dispatchEvent(new Event("open-today-send"))}
             className="flex h-9 items-center gap-2 rounded-full bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -185,7 +183,6 @@ export default function AppHeader() {
         </div>
       </div>
 
-      <TodaySendDrawer open={sendOpen} onClose={() => setSendOpen(false)} />
     </header>
   );
 }

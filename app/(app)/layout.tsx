@@ -4,6 +4,7 @@ import MobileNav from "@/components/shell/MobileNav";
 import AppHeader, { AppFooter } from "@/components/shell/AppHeader";
 import { ToastProvider } from "@/components/ui/Toast";
 import FaviconManager from "@/components/FaviconManager";
+import TodaySendDrawer from "@/components/TodaySendDrawer";
 
 /**
  * Portal chrome.
@@ -32,6 +33,7 @@ export default function PortalLayout({ children }: { children: ReactNode }) {
         </div>
 
         <MobileNav />
+        <TodaySendDrawer />
       </div>
     </ToastProvider>
   );
