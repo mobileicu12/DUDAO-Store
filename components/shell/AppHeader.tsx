@@ -7,7 +7,8 @@ import { signOut } from "next-auth/react";
 import { titleForPath } from "@/lib/nav";
 import { BUSINESS } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
-import { Badge, cx } from "@/components/ui/primitives";
+import { Badge, Button, cx, Field, Input } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/Modal";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useToast } from "@/components/ui/Toast";
 import { Logo } from "./Logo";
@@ -20,7 +21,33 @@ export default function AppHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw, setPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const savePassword = async () => {
+    setPwBusy(true);
+    try {
+      const res = await fetch("/api/me/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      const b = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        toast.error(b.error ?? "Could not change your password.");
+        return;
+      }
+      toast.success("Password updated.");
+      setPwOpen(false);
+      setPw("");
+    } catch {
+      toast.error("Could not change your password.");
+    } finally {
+      setPwBusy(false);
+    }
+  };
 
   // "Today's reports" downloads one PDF per account customer billed today.
   const downloadReports = async () => {
@@ -198,6 +225,19 @@ export default function AppHeader() {
                 >
                   Settings
                 </Link>
+                {!viaMaster && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setPwOpen(true);
+                    }}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-sm text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
+                  >
+                    Change password
+                  </button>
+                )}
                 <button
                   type="button"
                   role="menuitem"
@@ -212,6 +252,38 @@ export default function AppHeader() {
         </div>
       </div>
 
+      <Modal
+        open={pwOpen}
+        onClose={() => setPwOpen(false)}
+        title="Change password"
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setPwOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              loading={pwBusy}
+              disabled={pw.length < 8}
+              onClick={savePassword}
+            >
+              Save password
+            </Button>
+          </>
+        }
+      >
+        <Field
+          label="New password"
+          hint="At least 8 characters. This becomes your email sign-in password."
+        >
+          <Input
+            type="password"
+            autoComplete="new-password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder="••••••••"
+          />
+        </Field>
+      </Modal>
     </header>
   );
 }
