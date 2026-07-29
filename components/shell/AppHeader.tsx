@@ -24,7 +24,17 @@ export default function AppHeader() {
   const [pwOpen, setPwOpen] = useState(false);
   const [pw, setPw] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
+  const [tappedIn, setTappedIn] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const tapOut = async () => {
+    await fetch("/api/attendance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "out" }),
+    }).catch(() => {});
+    window.location.href = "/portal/tap-in";
+  };
 
   const savePassword = async () => {
     setPwBusy(true);
@@ -72,6 +82,16 @@ export default function AppHeader() {
       setZipBusy(false);
     }
   };
+
+  // Reflect the staff time-clock: when the user is tapped in, offer a tap-out.
+  useEffect(() => {
+    fetch("/api/attendance", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { me?: { tappedIn?: boolean } } | null) => {
+        if (d?.me) setTappedIn(!!d.me.tappedIn);
+      })
+      .catch(() => {});
+  }, [pathname]);
 
   // The day-reports shortcut appears only after the owner-configured hour, so
   // it is out of the way in the morning and to hand at close.
@@ -236,6 +256,19 @@ export default function AppHeader() {
                     className="block w-full rounded-md px-2.5 py-2 text-left text-sm text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
                   >
                     Change password
+                  </button>
+                )}
+                {tappedIn && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      tapOut();
+                    }}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-sm text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
+                  >
+                    Tap out
                   </button>
                 )}
                 <button

@@ -1,10 +1,41 @@
 import type { ReactNode } from "react";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
 import Sidebar from "@/components/shell/Sidebar";
 import MobileNav from "@/components/shell/MobileNav";
 import AppHeader, { AppFooter } from "@/components/shell/AppHeader";
 import { ToastProvider } from "@/components/ui/Toast";
 import FaviconManager from "@/components/FaviconManager";
 import TodaySendDrawer from "@/components/TodaySendDrawer";
+import { getSettings } from "@/lib/settings";
+import { TAPIN_COOKIE } from "@/lib/attendance";
+
+/**
+ * Staff tap-in gate. When the owner has switched on "Require staff to tap in",
+ * a signed-in user must clock in once per shift before the portal opens. The
+ * tap-in cookie holds today's date; anything else (missing, or yesterday's)
+ * sends them to the tap-in screen. Everyone is auto-tapped-out overnight, so
+ * the cookie naturally goes stale and the gate re-arms each morning.
+ */
+async function tapInGate(): Promise<void> {
+  let requireTapIn = false;
+  try {
+    requireTapIn = (await getSettings()).requireTapIn;
+  } catch {
+    return; // Never let a settings hiccup lock staff out of the portal.
+  }
+  if (!requireTapIn) return;
+
+  const path = (await headers()).get("x-pathname") ?? "";
+  if (path === "/portal/tap-in") return;
+
+  const jar = await cookies();
+  const today = new Date().toISOString().slice(0, 10);
+  if (jar.get(TAPIN_COOKIE)?.value === today) return;
+
+  const from = path.startsWith("/portal") ? path : "/portal";
+  redirect(`/portal/tap-in?from=${encodeURIComponent(from)}`);
+}
 
 /**
  * Portal chrome.
@@ -13,7 +44,8 @@ import TodaySendDrawer from "@/components/TodaySendDrawer";
  * while only the content column scrolls, so the till's search box never
  * scrolls out of reach mid-sale.
  */
-export default function PortalLayout({ children }: { children: ReactNode }) {
+export default async function PortalLayout({ children }: { children: ReactNode }) {
+  await tapInGate();
   return (
     <ToastProvider>
       <FaviconManager />

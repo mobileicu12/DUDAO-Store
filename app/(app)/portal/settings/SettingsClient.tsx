@@ -39,6 +39,23 @@ export default function SettingsClient() {
   const [waTemplate, setWaTemplate] = useState("");
   const [savingWa, setSavingWa] = useState(false);
 
+  type Shift = {
+    email: string;
+    name: string;
+    tapIn: string;
+    tapOut: string | null;
+    autoOut: boolean;
+    minutes: number;
+    open: boolean;
+  };
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  useEffect(() => {
+    fetch("/api/attendance", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { today?: Shift[] } | null) => d?.today && setShifts(d.today))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetch("/api/settings", { cache: "no-store" })
       .then((r) => r.json())
@@ -338,6 +355,48 @@ export default function SettingsClient() {
               onChange={(v) => set({ requireTapIn: v })}
               label="Require staff to tap in at the start of a shift"
             />
+            {shifts.length > 0 && (
+              <div className="rounded-lg border border-line">
+                <p className="border-b border-line px-3 py-2 text-xs font-semibold tracking-wide text-muted uppercase">
+                  Today&apos;s shifts
+                </p>
+                <ul className="divide-y divide-line">
+                  {shifts.map((s, i) => {
+                    const time = (iso: string) =>
+                      new Date(iso).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                    const h = Math.floor(s.minutes / 60);
+                    const m = s.minutes % 60;
+                    return (
+                      <li
+                        key={`${s.email}-${i}`}
+                        className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 truncate text-ink">
+                          {s.name || s.email}
+                        </span>
+                        <span className="tnum shrink-0 text-muted">
+                          {time(s.tapIn)}–{s.open ? "now" : time(s.tapOut!)}
+                          {" · "}
+                          {h ? `${h}h ` : ""}
+                          {m}m
+                          {s.open && (
+                            <span className="ml-1.5 rounded-full bg-success-subtle px-1.5 py-0.5 text-[0.65rem] font-semibold text-success">
+                              in
+                            </span>
+                          )}
+                          {s.autoOut && (
+                            <span className="ml-1.5 text-[0.65rem] text-faint">auto</span>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             <Field
               label="Show day-reports button after this hour"
               hint="0–23. The header shows a today's-reports shortcut after this time."

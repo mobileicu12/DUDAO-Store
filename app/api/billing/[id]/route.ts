@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requirePermission } from "@/lib/guard";
 import { deleteInvoice, getInvoice, updateInvoice } from "@/lib/billing";
+import { invoiceSharePath } from "@/lib/invoice-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,8 @@ export async function GET(_req: Request, { params }: Ctx) {
         { status: 404 },
       );
     }
-    return NextResponse.json(invoice);
+    // A signed public link staff can hand to the customer (WhatsApp / email).
+    return NextResponse.json({ ...invoice, shareUrl: invoiceSharePath(invoice.id) });
   } catch (err) {
     return errorResponse(err, "open this invoice");
   }

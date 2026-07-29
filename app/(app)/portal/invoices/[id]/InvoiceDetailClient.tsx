@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { money } from "@/lib/business";
+import { money, BUSINESS } from "@/lib/business";
 import {
   methodLabel,
   PAYMENT_METHODS,
@@ -68,6 +68,8 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [confirmVoid, setConfirmVoid] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/billing/${id}`, { cache: "no-store" });
@@ -75,8 +77,9 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? "Could not open that invoice.");
     }
-    const data = (await res.json()) as InvoiceRecord;
+    const data = (await res.json()) as InvoiceRecord & { shareUrl?: string };
     setInvoice(data);
+    setShareUrl(typeof data.shareUrl === "string" ? data.shareUrl : "");
     setLines(
       data.lines.map((l) => ({
         key: `k${seq++}`,
@@ -174,6 +177,33 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
     }
   };
 
+  // Email the invoice PDF to the customer (or a typed address).
+  const sendEmail = async () => {
+    if (!invoice) return;
+    const fallback = invoice.customer?.email || "";
+    const to = window.prompt("Send this invoice to which email?", fallback);
+    if (to === null) return;
+    if (!to.trim()) {
+      toast.error("Enter an email address to send to.");
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch("/api/email/invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceId: invoice.id, to: to.trim() }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "The invoice could not be emailed.");
+      toast.success(`Invoice emailed to ${to.trim()}.`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
   const remove = async () => {
     setSaving(true);
     try {
@@ -217,6 +247,15 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
 
   const seg = segmentDef(invoice.segment);
 
+  // WhatsApp click-to-send: opens WhatsApp with a prefilled message and the
+  // customer's public invoice link. No API credentials needed.
+  const custName = invoice.customer?.name || invoice.walkInName || "";
+  const custPhone = (invoice.customer?.phone || invoice.walkInPhone || "").replace(/[^0-9]/g, "");
+  const balanceDue = invoice.totals.balance;
+  const absShare = shareUrl ? (typeof window !== "undefined" ? window.location.origin + shareUrl : shareUrl) : "";
+  const waText = `Hi ${custName || "there"}, here is your invoice ${invoice.number} from ${BUSINESS.name} — total ${money(invoice.totals.total)}${balanceDue > 0.001 ? ` (${money(balanceDue)} due)` : " (paid)"}.${absShare ? ` View / download it here: ${absShare}` : ""}`;
+  const waUrl = custPhone ? `https://wa.me/${custPhone}?text=${encodeURIComponent(waText)}` : null;
+
   return (
     <div>
       <PageHeader
@@ -250,6 +289,23 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
             <a href={`/api/public/invoice/${invoice.id}`} target="_blank" rel="noreferrer">
               <Button>Download PDF</Button>
             </a>
+            {waUrl ? (
+              <a href={waUrl} target="_blank" rel="noreferrer">
+                <Button className="border-success/40 text-success hover:bg-success-subtle">
+                  WhatsApp
+                </Button>
+              </a>
+            ) : (
+              <Button
+                disabled
+                title="Add a phone number to this customer to enable WhatsApp"
+              >
+                WhatsApp
+              </Button>
+            )}
+            <Button onClick={sendEmail} loading={sending}>
+              Email
+            </Button>
             <Button
               onClick={() => act({ action: "duplicate" }, "Duplicated.")}
               disabled={saving}

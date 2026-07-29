@@ -121,7 +121,7 @@ export default function DashboardClient() {
       <section className="mb-6 overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] p-5 text-white shadow-lg sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-[#dcb73f] uppercase">
+            <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-[#f9a03a] uppercase">
               Today&apos;s takings · {sales} sale{sales === 1 ? "" : "s"}
             </p>
             {loading ? (
@@ -142,7 +142,7 @@ export default function DashboardClient() {
                 onClick={() => setView(v)}
                 className={cx(
                   "rounded-full px-3 py-1 text-xs font-semibold capitalize transition-colors",
-                  view === v ? "bg-[#dcb73f] text-[#16120a]" : "text-white/70 hover:text-white",
+                  view === v ? "bg-[#f9a03a] text-[#231202]" : "text-white/70 hover:text-white",
                 )}
               >
                 {v}
@@ -178,7 +178,7 @@ export default function DashboardClient() {
               {" · "}
               {today.latest.name}
             </span>
-            <span className="tnum shrink-0 font-semibold text-[#dcb73f]">
+            <span className="tnum shrink-0 font-semibold text-[#f9a03a]">
               {money(today.latest.total)}
             </span>
           </Link>
@@ -258,7 +258,7 @@ function HeroTile({
         <p
           className={cx(
             "tnum mt-1 text-lg font-semibold tracking-tight",
-            tone === "amber" ? "text-[#dcb73f]" : "text-white",
+            tone === "amber" ? "text-[#f9a03a]" : "text-white",
           )}
         >
           {value}

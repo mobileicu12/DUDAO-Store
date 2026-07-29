@@ -6,6 +6,11 @@ import { money } from "@/lib/business";
 import { PRICE_TIERS, type TierKey } from "@/lib/pricing";
 import type { ProductRecord } from "@/lib/products";
 import {
+  printBarcodeLabels,
+  LABEL_PRESETS,
+  type LabelPresetKey,
+} from "@/lib/barcode-labels";
+import {
   ColumnChooser,
   SortHeader,
   useColumns,
@@ -78,6 +83,11 @@ export default function InventoryClient() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkPrompt, setBulkPrompt] = useState<"price" | "stock" | null>(null);
   const [bulkValue, setBulkValue] = useState("");
+  const [labelOpen, setLabelOpen] = useState(false);
+  const [labelPreset, setLabelPreset] = useState<LabelPresetKey>("sheet-65");
+  const [labelCopies, setLabelCopies] = useState(1);
+  const [labelShowPrice, setLabelShowPrice] = useState(true);
+  const [labelShowSku, setLabelShowSku] = useState(false);
 
   const { visible, hidden, toggle, reset } = useColumns(
     "inventory",
@@ -248,6 +258,32 @@ export default function InventoryClient() {
       setBulkPrompt(null);
       setBulkValue("");
     }
+  };
+
+  // Print Code128 labels for the selected products, using each product's
+  // barcode (or its SKU as a fallback). Runs entirely client-side.
+  const printLabels = () => {
+    const items = products
+      .filter((p) => selected.has(p.id))
+      .map((p) => ({
+        code: (p.barcode || p.sku || "").trim(),
+        title: p.title,
+        price: p.price ? p.price.toFixed(2) : undefined,
+        sku: p.sku,
+      }))
+      .filter((i) => i.code);
+    if (!items.length) {
+      toast.error("Selected products have no barcode or SKU. Use “Assign barcodes” first.");
+      return;
+    }
+    printBarcodeLabels(items, {
+      preset: labelPreset,
+      copies: labelCopies,
+      showPrice: labelShowPrice,
+      showSku: labelShowSku,
+      currency: "GBP",
+    });
+    setLabelOpen(false);
   };
 
   const allSelected = products.length > 0 && selected.size === products.length;
@@ -573,6 +609,13 @@ export default function InventoryClient() {
               </Button>
               <Button
                 size="sm"
+                disabled={bulkBusy}
+                onClick={() => setLabelOpen(true)}
+              >
+                Print labels
+              </Button>
+              <Button
+                size="sm"
                 variant="danger"
                 disabled={bulkBusy}
                 onClick={() => setConfirmDelete(true)}
@@ -637,6 +680,61 @@ export default function InventoryClient() {
         <p className="mt-2 text-xs text-muted">
           This overwrites the existing value on every selected product.
         </p>
+      </Modal>
+
+      <Modal
+        open={labelOpen}
+        onClose={() => setLabelOpen(false)}
+        title="Print barcode labels"
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setLabelOpen(false)}>Cancel</Button>
+            <Button variant="primary" onClick={printLabels}>
+              Print
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-3 text-xs text-muted">
+          {selected.size} product{selected.size === 1 ? "" : "s"} selected. Uses each
+          product&apos;s barcode (or SKU).
+        </p>
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted">Label size</span>
+          <select
+            value={labelPreset}
+            onChange={(e) => setLabelPreset(e.target.value as LabelPresetKey)}
+            className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-ink"
+          >
+            {LABEL_PRESETS.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mt-3 block text-sm">
+          <span className="mb-1 block text-muted">Copies per product</span>
+          <Input
+            type="number"
+            min="1"
+            value={labelCopies}
+            onChange={(e) => setLabelCopies(Math.max(1, Number(e.target.value)))}
+          />
+        </label>
+        <div className="mt-3 flex gap-4 text-sm text-ink">
+          <Checkbox
+            checked={labelShowPrice}
+            onChange={(v) => setLabelShowPrice(v)}
+            label="Show price"
+          />
+          <Checkbox
+            checked={labelShowSku}
+            onChange={(v) => setLabelShowSku(v)}
+            label="Show SKU"
+          />
+        </div>
       </Modal>
     </div>
   );
