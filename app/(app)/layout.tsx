@@ -60,8 +60,9 @@ export default async function PortalLayout({ children }: { children: ReactNode }
             <div className="mx-auto w-full max-w-[1600px] px-4 py-5 pb-28 sm:px-6 md:pb-6">
               {children}
             </div>
-            <AppFooter />
           </main>
+          {/* Pinned to the bottom of the column, below the scrolling content. */}
+          <AppFooter />
         </div>
 
         <MobileNav />
