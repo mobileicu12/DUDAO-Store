@@ -18,6 +18,7 @@ import {
   Field,
   Input,
   PageHeader,
+  SectionLabel,
   Segmented,
   Skeleton,
   StatCard,
@@ -44,6 +45,15 @@ const COLUMNS: ColumnDef<ColKey>[] = [
   { key: "outstanding", label: "Outstanding", numeric: true, locked: true },
 ];
 
+type TodayCust = {
+  id: string | null;
+  name: string;
+  hasAccount: boolean;
+  dayTotal: number;
+  dayPaid: number;
+  invoiceCount: number;
+};
+
 export default function CustomersClient() {
   const toast = useToast();
 
@@ -57,6 +67,14 @@ export default function CustomersClient() {
   const [debounced, setDebounced] = useState("");
   const [segment, setSegment] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
+  const [todayCust, setTodayCust] = useState<TodayCust[]>([]);
+
+  useEffect(() => {
+    fetch("/api/reports/today-customers", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { customers: [] }))
+      .then((d: { customers: TodayCust[] }) => setTodayCust(d.customers))
+      .catch(() => {});
+  }, []);
 
   const { visible, hidden, toggle, reset } = useColumns("customers", COLUMNS, [
     "company",
@@ -147,6 +165,51 @@ export default function CustomersClient() {
           loading={loading}
         />
       </div>
+
+      {todayCust.length > 0 && (
+        <div className="mb-6">
+          <SectionLabel>Today&apos;s customers</SectionLabel>
+          <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+            <table className="w-full text-sm">
+              <thead className="border-b border-line bg-subtle text-left text-xs font-semibold text-ink-2">
+                <tr>
+                  <th className="px-4 py-2.5">Customer</th>
+                  <th className="px-4 py-2.5 text-right">Bills</th>
+                  <th className="px-4 py-2.5 text-right">Billed today</th>
+                  <th className="px-4 py-2.5 text-right">Paid today</th>
+                  <th className="px-4 py-2.5 text-right">Outstanding</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {todayCust.map((c, i) => {
+                  const out = Math.max(0, Math.round((c.dayTotal - c.dayPaid) * 100) / 100);
+                  return (
+                    <tr key={c.id ?? `walkin-${i}`}>
+                      <td className="px-4 py-2.5 font-medium text-ink">
+                        {c.id ? (
+                          <Link href={`/portal/customers/${c.id}`} className="hover:text-accent">
+                            {c.name}
+                          </Link>
+                        ) : (
+                          c.name
+                        )}
+                      </td>
+                      <td className="tnum px-4 py-2.5 text-right text-muted">{c.invoiceCount}</td>
+                      <td className="tnum px-4 py-2.5 text-right text-ink">{money(c.dayTotal)}</td>
+                      <td className="tnum px-4 py-2.5 text-right text-success">{money(c.dayPaid)}</td>
+                      <td className="tnum px-4 py-2.5 text-right">
+                        <span className={out > 0 ? "font-medium text-warning" : "text-muted"}>
+                          {money(out)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
