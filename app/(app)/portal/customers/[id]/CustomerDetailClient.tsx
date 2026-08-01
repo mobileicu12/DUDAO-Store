@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { money } from "@/lib/business";
 import {
   methodLabel,
@@ -484,12 +485,34 @@ function EditCustomerModal({
   onSaved: (updated: Partial<CustomerDetail>) => void;
 }) {
   const toast = useToast();
+  const router = useRouter();
   const [form, setForm] = useState({ ...customer });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) setForm({ ...customer });
   }, [open, customer]);
+
+  const remove = async () => {
+    if (
+      !window.confirm(
+        `Remove ${customer.company || customer.name}? This cannot be undone. Customers with invoice history cannot be removed — their records are kept.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/customers/${customer.id}`, { method: "DELETE" });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "That customer was not removed.");
+      toast.success("Customer removed.");
+      router.push("/portal/customers");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const set = (patch: Partial<CustomerDetail>) =>
     setForm((prev) => ({ ...prev, ...patch }));
@@ -537,6 +560,9 @@ function EditCustomerModal({
       dismissable={!busy}
       footer={
         <>
+          <Button variant="danger" onClick={remove} disabled={busy} className="mr-auto">
+            Delete customer
+          </Button>
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
