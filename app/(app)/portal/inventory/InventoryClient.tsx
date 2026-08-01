@@ -325,7 +325,7 @@ export default function InventoryClient() {
 
       {/* Toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+        <div className="relative w-full min-w-0 sm:w-auto sm:flex-1 sm:max-w-xs">
           <svg
             viewBox="0 0 24 24"
             className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-faint"
@@ -574,7 +574,7 @@ export default function InventoryClient() {
 
       {/* Bulk action bar */}
       {selected.size > 0 && (
-        <div className="no-print fixed inset-x-0 bottom-0 z-40 px-3 pb-24 md:pb-4">
+        <div className="no-print fixed inset-x-0 bottom-0 z-40 px-3 pb-24 md:pb-14">
           <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface/95 p-2.5 shadow-pop backdrop-blur-md">
             <span className="px-2 text-sm font-medium text-ink">
               {selected.size} selected
