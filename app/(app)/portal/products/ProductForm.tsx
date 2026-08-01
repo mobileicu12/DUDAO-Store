@@ -114,7 +114,7 @@ export default function ProductForm({
     });
   };
 
-  const save = async () => {
+  const save = async (addAnother = false) => {
     if (!form.title.trim()) {
       toast.error("Give the product a name before saving.");
       return;
@@ -153,7 +153,17 @@ export default function ProductForm({
       if (!res.ok) throw new Error(body.error ?? "That product was not saved.");
 
       toast.success(productId ? "Product saved." : `${form.title} created.`);
-      if (!productId) router.push(`/portal/products/${body.id}/edit`);
+      if (!productId) {
+        if (addAnother) {
+          // Stay on a fresh blank form so staff can enter the next item
+          // without navigating back and forth.
+          setForm(EMPTY_PRODUCT);
+          setImageUrl("");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        } else {
+          router.push(`/portal/products/${body.id}/edit`);
+        }
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -189,7 +199,16 @@ export default function ProductForm({
             <Link href="/portal/inventory">
               <Button>Cancel</Button>
             </Link>
-            <Button variant="primary" loading={saving} onClick={save}>
+            {!productId && (
+              <Button
+                loading={saving}
+                onClick={() => save(true)}
+                title="Save this product and start a new blank one"
+              >
+                Save &amp; add another
+              </Button>
+            )}
+            <Button variant="primary" loading={saving} onClick={() => save()}>
               {productId ? "Save changes" : "Create product"}
             </Button>
           </>
