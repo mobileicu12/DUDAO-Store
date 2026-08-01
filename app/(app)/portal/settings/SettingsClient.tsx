@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import type { PortalSettings } from "@/lib/settings";
 import { useIsOwner } from "@/lib/use-me";
 import {
@@ -161,6 +161,50 @@ export default function SettingsClient() {
       toast.error((e as Error).message);
     } finally {
       setDriveBusy(false);
+    }
+  };
+
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const restore = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(await file.text());
+    } catch {
+      toast.error("That file isn't valid JSON — pick a DUDAO backup file.");
+      return;
+    }
+    const typed = window.prompt(
+      "Restore will REPLACE all current products, customers, invoices and the ledger with the contents of this backup. This cannot be undone (a pre-restore copy is saved to Drive if configured).\n\nType RESTORE to confirm:",
+    );
+    if (typed !== "RESTORE") {
+      if (typed !== null) toast.error("Restore cancelled — you didn't type RESTORE.");
+      return;
+    }
+    setRestoreBusy(true);
+    try {
+      const res = await fetch("/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        restored?: { products: number; customers: number; invoices: number };
+      };
+      if (!res.ok) throw new Error(body.error ?? "The restore failed.");
+      const r = body.restored;
+      toast.success(
+        "Backup restored.",
+        r ? `${r.products} products, ${r.customers} customers, ${r.invoices} invoices.` : undefined,
+      );
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setRestoreBusy(false);
     }
   };
 
@@ -448,8 +492,33 @@ export default function SettingsClient() {
             </div>
             <p className="mt-2 text-xs text-muted">
               A dated snapshot is also saved to your Google Drive automatically
-              every night once Drive backup is configured.
+              every night. The last 7 daily backups are kept, so you always have
+              the last few days and a roughly week-old copy.
             </p>
+
+            <div className="mt-4 border-t border-line pt-4">
+              <p className="text-sm font-medium text-ink">Restore from a backup</p>
+              <p className="mt-1 text-xs text-muted">
+                Replaces everything with the contents of a backup file. Use this
+                only to recover from a mistake or data loss — the current data is
+                copied to Drive first so a wrong restore can be undone.
+              </p>
+              <label className="mt-3 inline-flex">
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={restore}
+                  disabled={restoreBusy}
+                />
+                <span
+                  className="inline-flex h-9 cursor-pointer items-center rounded-md border border-danger/40 bg-danger-subtle px-3.5 text-sm font-semibold text-danger transition-colors hover:bg-danger/10"
+                  aria-disabled={restoreBusy}
+                >
+                  {restoreBusy ? "Restoring…" : "Restore from backup…"}
+                </span>
+              </label>
+            </div>
           </Card>
         )}
       </div>
