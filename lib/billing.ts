@@ -96,6 +96,22 @@ export function toInvoiceRecord(row: InvoiceRow): InvoiceRecord {
 
   const paid = row.payments.reduce((s, p) => s + num(p.amount), 0);
 
+  const voided = row.status === "VOID";
+  const totals = calcTotals({
+    lines,
+    discount: num(row.discount),
+    taxable: row.taxable,
+    taxRate: num(row.taxRate),
+    paid,
+  });
+  // A voided sale never happened: it owes nothing and must count toward no
+  // total anywhere. Zeroing here is the single source of truth — every
+  // consumer (invoice list, dashboard, customer ledger) reads these totals,
+  // so none of them can accidentally include a voided invoice.
+  const finalTotals = voided
+    ? { subtotal: 0, discount: 0, tax: 0, total: 0, paid: 0, balance: 0 }
+    : totals;
+
   return {
     id: row.id,
     number: row.number,
@@ -117,17 +133,25 @@ export function toInvoiceRecord(row: InvoiceRow): InvoiceRecord {
       note: p.note,
       takenAt: p.takenAt.toISOString(),
     })),
-    totals: calcTotals({
-      lines,
-      discount: num(row.discount),
-      // A voided invoice owes nothing, whatever its lines say.
-      taxable: row.status === "VOID" ? false : row.taxable,
-      taxRate: num(row.taxRate),
-      paid,
-    }),
+    totals: finalTotals,
     issuedAt: row.issuedAt.toISOString(),
     paidAt: row.paidAt?.toISOString() ?? null,
   };
+}
+
+/**
+ * Shop-wide money still owed on invoices — the single source for the dashboard
+ * headline and the invoices-list summary, so those two figures can never
+ * disagree. Voided invoices contribute nothing (their totals are zeroed), and
+ * partial payments are respected (balance = total − paid).
+ */
+export async function outstandingTotal(): Promise<number> {
+  const rows = await db.invoice.findMany({
+    where: { status: { not: "VOID" } },
+    include: invoiceInclude,
+    take: 5000,
+  });
+  return money2(rows.reduce((s, r) => s + toInvoiceRecord(r).totals.balance, 0));
 }
 
 export async function getInvoice(id: string): Promise<InvoiceRecord | null> {

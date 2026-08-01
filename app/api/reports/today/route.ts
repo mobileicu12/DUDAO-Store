@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { canSeeFinanceRequest, errorResponse, requireAuth } from "@/lib/guard";
 import { db, money2, num } from "@/lib/db";
-import { computeTotals, dayRange } from "@/lib/billing";
+import { computeTotals, dayRange, outstandingTotal } from "@/lib/billing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +27,6 @@ export async function GET() {
       todayPayments,
       todayByMethod,
       latestInvoice,
-      allCustomers,
       allInvoices,
     ] = await Promise.all([
       db.invoice.findMany({
@@ -53,9 +52,7 @@ export async function GET() {
         orderBy: { issuedAt: "desc" },
         include: { lines: true, customer: { select: { name: true, company: true } } },
       }),
-      db.customer.aggregate({ _sum: { openingBalance: true } }),
-      // Outstanding is a whole-book figure, not a today figure, so it needs
-      // every live invoice and every live payment.
+      // All-time sales (for the finance-only turnover figure below).
       db.invoice.findMany({
         where: { status: { not: "VOID" } },
         include: { lines: true },
@@ -107,16 +104,10 @@ export async function GET() {
         }
       : null;
 
-    const paidEver = await db.payment.aggregate({
-      where: { revoked: false },
-      _sum: { amount: true },
-    });
-
-    const outstanding = money2(
-      num(allCustomers._sum.openingBalance) +
-        allTimeSales -
-        num(paidEver._sum.amount),
-    );
+    // The same figure the invoices list shows, from one shared function, so
+    // the dashboard and the invoices page can never disagree. Voided and
+    // deleted invoices drop out of it immediately.
+    const outstanding = await outstandingTotal();
 
     return NextResponse.json({
       invoiced,
