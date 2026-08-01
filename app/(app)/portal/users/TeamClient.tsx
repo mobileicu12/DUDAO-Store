@@ -19,7 +19,6 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   cx,
   EmptyState,
   Field,
@@ -371,6 +370,7 @@ function MemberModal({
                 key={p.key}
                 type="button"
                 onClick={() => toggle(p.key)}
+                aria-pressed={perms.has(p.key)}
                 className={cx(
                   "flex items-start gap-2.5 rounded-lg border p-2.5 text-left transition-colors",
                   perms.has(p.key)
@@ -378,11 +378,29 @@ function MemberModal({
                     : "border-line hover:bg-subtle",
                 )}
               >
-                <Checkbox
-                  checked={perms.has(p.key)}
-                  onChange={() => toggle(p.key)}
-                  label={<span className="sr-only">{p.label}</span>}
-                />
+                <span
+                  aria-hidden
+                  className={cx(
+                    "mt-0.5 flex h-[1.15rem] w-[1.15rem] shrink-0 items-center justify-center rounded border transition-colors",
+                    perms.has(p.key)
+                      ? "border-accent bg-accent text-accentfg"
+                      : "border-line-strong bg-surface",
+                  )}
+                >
+                  {perms.has(p.key) && (
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={3}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="m5 12 5 5L20 7" />
+                    </svg>
+                  )}
+                </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-ink">
                     {p.label}
