@@ -1,36 +1,75 @@
 import "server-only";
 import { db } from "./db";
-import { getSettings, getIntegrations } from "./settings";
 
 /**
- * The full business snapshot.
+ * A COMPLETE snapshot of the database — every table, every column.
  *
- * Every customer with their whole payment ledger, every invoice with its lines
- * and payments, the catalogue, and the settings (including integration secrets
- * — a backup you cannot restore credentials from is not a backup). Products can
- * be re-imported from a spreadsheet; a customer's debt history cannot be
- * reconstructed, so it is the ledgers that make this worth keeping.
+ * Each table is dumped as a flat array of raw rows, so nothing is summarised or
+ * dropped and the whole thing can be restored back exactly (see lib/restore.ts).
+ * This includes staff accounts, the invoice counter and the time-clock, not
+ * just the catalogue and ledger.
+ *
+ * Version 2 is the flat, all-tables shape. Older files (version 1) nested images
+ * and lines inside their parents and omitted staff/counter/attendance; the
+ * restore still understands them.
  */
 export async function buildBackupSnapshot() {
-  const [settings, integrations, products, collections, customers, invoices] =
-    await Promise.all([
-      getSettings(),
-      getIntegrations(),
-      db.product.findMany({ include: { images: true, collections: true } }),
-      db.collection.findMany(),
-      db.customer.findMany({ include: { payments: true } }),
-      db.invoice.findMany({ include: { lines: true, payments: true } }),
-    ]);
-
-  return {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    settings,
-    integrations,
+  const [
+    setting,
+    integration,
+    counter,
+    users,
     products,
+    productImages,
     collections,
+    collectionProducts,
     customers,
     invoices,
+    invoiceLines,
+    payments,
+    attendance,
+  ] = await Promise.all([
+    db.setting.findMany(),
+    db.integration.findMany(),
+    db.counter.findMany(),
+    db.user.findMany(),
+    db.product.findMany(),
+    db.productImage.findMany(),
+    db.collection.findMany(),
+    db.collectionProduct.findMany(),
+    db.customer.findMany(),
+    db.invoice.findMany(),
+    db.invoiceLine.findMany(),
+    db.payment.findMany(),
+    db.attendance.findMany(),
+  ]);
+
+  return {
+    version: 2,
+    generatedAt: new Date().toISOString(),
+    counts: {
+      users: users.length,
+      products: products.length,
+      collections: collections.length,
+      customers: customers.length,
+      invoices: invoices.length,
+      payments: payments.length,
+      attendance: attendance.length,
+    },
+    // Every table, flat. Keys map 1:1 to Prisma models.
+    setting,
+    integration,
+    counter,
+    users,
+    products,
+    productImages,
+    collections,
+    collectionProducts,
+    customers,
+    invoices,
+    invoiceLines,
+    payments,
+    attendance,
   };
 }
 
