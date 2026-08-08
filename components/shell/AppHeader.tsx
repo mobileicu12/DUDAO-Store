@@ -20,6 +20,7 @@ export default function AppHeader() {
   const toast = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [pw, setPw] = useState("");
@@ -94,7 +95,8 @@ export default function AppHeader() {
   }, [pathname]);
 
   // The day-reports shortcut appears only after the owner-configured hour, so
-  // it is out of the way in the morning and to hand at close.
+  // it is out of the way in the morning and to hand at close. The end-of-day
+  // backup shortcut appears from 8pm for the same reason.
   useEffect(() => {
     fetch("/api/settings", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -104,6 +106,7 @@ export default function AppHeader() {
         }
       })
       .catch(() => {});
+    setShowBackup(new Date().getHours() >= 20);
   }, []);
 
   useEffect(() => {
@@ -161,6 +164,18 @@ export default function AppHeader() {
       </div>
 
       <div className="ml-auto flex items-center gap-2.5">
+        {showBackup && me?.role === "owner" && (
+          <a
+            href="/api/backup"
+            title="Download the full backup (end-of-day)"
+            className="flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface px-3.5 text-sm font-semibold text-ink transition-colors hover:bg-subtle"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 3.5v10m0 0 3.5-3.5M12 13.5 8.5 10M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16" />
+            </svg>
+            <span className="hidden sm:inline">Download backup</span>
+          </a>
+        )}
         {showReports && (
           <button
             type="button"

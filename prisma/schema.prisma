@@ -18,6 +18,24 @@ datasource db {
   provider = "postgresql"
 }
 
+/// In-database backup history. Each row is a full JSON snapshot of every other
+/// table (never of this table — that would nest backups inside backups). A
+/// convenience/rollback store that sits alongside the off-site Google Drive
+/// copies; pruned to a rolling window. Survives a restore, which only touches
+/// the business tables.
+model Backup {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  /// "auto" (nightly cron) or "manual" (owner clicked Back up now).
+  kind      String   @default("auto")
+  label     String   @default("")
+  sizeBytes Int      @default(0)
+  /// The full snapshot, as returned by buildBackupSnapshot().
+  data      Json
+
+  @@index([createdAt])
+}
+
 /// Portal settings. Single row, id is always 1.
 model Setting {
   id Int @id @default(1)

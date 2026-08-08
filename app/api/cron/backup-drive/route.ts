@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildBackupSnapshot, backupFilename } from "@/lib/backup";
 import { uploadTextToDrive, driveConfigured } from "@/lib/google-drive";
+import { saveBackupToDb } from "@/lib/db-backups";
 import { loadBusiness } from "@/lib/business";
 import { isOwnerRequest } from "@/lib/guard";
 
@@ -28,28 +29,40 @@ async function authorised(req: Request): Promise<boolean> {
   return isOwnerRequest();
 }
 
-async function handle(req: Request) {
+async function handle(req: Request, kind: "auto" | "manual") {
   if (!(await authorised(req))) {
     return NextResponse.json({ error: "Not authorised." }, { status: 401 });
-  }
-  if (!driveConfigured()) {
-    return NextResponse.json(
-      { error: "Google Drive backup is not configured. Set GOOGLE_DRIVE_REFRESH_TOKEN." },
-      { status: 503 },
-    );
   }
   try {
     const biz = await loadBusiness();
     const snapshot = await buildBackupSnapshot();
-    const file = await uploadTextToDrive({
-      // Each site backs up to its own folder, so both can share one Drive.
-      folderName: `${biz.name} Backups`,
-      filename: backupFilename(biz.name),
-      content: JSON.stringify(snapshot),
-      mimeType: "application/json",
-      keep: 7, // last 7 daily backups: always covers the last 3 days + a ~week-old one
-    });
-    return NextResponse.json({ ok: true, file: file.name, link: file.link });
+
+    // Always keep a copy inside the database (quick rollback history), pruned
+    // to the last 14. This works even when Drive isn't configured.
+    const saved = await saveBackupToDb(snapshot, kind);
+
+    // Off-site copy to Google Drive when it's set up; keep the last 14 dailies
+    // so there's always yesterday, a ~weekly, and a ~14-day-old backup. This is
+    // best-effort — a Drive problem (e.g. an expired token) must never fail the
+    // backup, because the database copy above already succeeded.
+    let drive: { file: string; link: string | null } | null = null;
+    let driveError: string | null = null;
+    if (driveConfigured()) {
+      try {
+        const file = await uploadTextToDrive({
+          folderName: `${biz.name} Backups`,
+          filename: backupFilename(biz.name),
+          content: JSON.stringify(snapshot),
+          mimeType: "application/json",
+          keep: 14,
+        });
+        drive = { file: file.name, link: file.link };
+      } catch (e) {
+        driveError = e instanceof Error ? e.message : "Drive upload failed.";
+      }
+    }
+
+    return NextResponse.json({ ok: true, dbBackupId: saved.id, drive, driveError });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Backup failed." },
@@ -58,6 +71,6 @@ async function handle(req: Request) {
   }
 }
 
-// GET is the scheduled entry point; POST is the owner's "Back up now" button.
-export const GET = (req: Request) => handle(req);
-export const POST = (req: Request) => handle(req);
+// GET is the scheduled nightly run; POST is the owner's "Back up now" button.
+export const GET = (req: Request) => handle(req, "auto");
+export const POST = (req: Request) => handle(req, "manual");

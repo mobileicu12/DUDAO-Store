@@ -154,9 +154,22 @@ export default function SettingsClient() {
     setDriveBusy(true);
     try {
       const res = await fetch("/api/cron/backup-drive", { method: "POST" });
-      const body = (await res.json().catch(() => ({}))) as { error?: string; file?: string };
-      if (!res.ok) throw new Error(body.error ?? "The Drive backup did not run.");
-      toast.success(`Backed up to Google Drive: ${body.file ?? "done"}.`);
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        drive?: { file: string } | null;
+        driveError?: string | null;
+      };
+      if (!res.ok) throw new Error(body.error ?? "The backup did not run.");
+      if (body.drive) {
+        toast.success("Backup saved.", "Stored in the database and Google Drive.");
+      } else if (body.driveError) {
+        toast.success(
+          "Backup saved to the database.",
+          "Google Drive upload failed — its token may have expired. See the note below.",
+        );
+      } else {
+        toast.success("Backup saved.", "Stored in the database. (Google Drive isn't set up yet.)");
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -487,7 +500,7 @@ export default function SettingsClient() {
             <div className="mt-3 flex flex-wrap gap-2">
               <Button onClick={backup}>Download full backup</Button>
               <Button variant="secondary" loading={driveBusy} onClick={backupToDrive}>
-                Back up to Google Drive now
+                Back up now (database + Drive)
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted">
