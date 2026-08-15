@@ -132,14 +132,96 @@ export async function shopProducts(args: ShopListArgs = {}): Promise<ShopListRes
 }
 
 /** A single active product for its detail page. */
-export async function shopProduct(id: string): Promise<ProductRecord | null> {
+export type ShopProductDetail = {
+  record: ProductRecord;
+  /** Every image on the product, in order, for the gallery. */
+  gallery: string[];
+  descriptionHtml: string;
+};
+
+export async function shopProduct(id: string): Promise<ShopProductDetail | null> {
   const row = await db.product.findFirst({
     where: { id, status: "ACTIVE" },
     include: { images: { orderBy: { position: "asc" } } },
   });
   if (!row) return null;
-  // toRecord only keeps the first image; expose the full gallery too.
-  return toRecord({ ...row, images: row.images.slice(0, 1) });
+  const gallery = row.images.map((img) => img.url).filter(Boolean);
+  // toRecord keeps the first image for `imageUrl`; the gallery carries them all.
+  return {
+    record: toRecord({ ...row, images: row.images.slice(0, 1) }),
+    gallery,
+    descriptionHtml: row.descriptionHtml,
+  };
+}
+
+export type ShopCollectionCard = {
+  id: string;
+  handle: string;
+  title: string;
+  imageUrl: string | null;
+  count: number;
+};
+
+/** Collections that have at least one active product, for the browse index. */
+export async function shopCollections(): Promise<ShopCollectionCard[]> {
+  const rows = await db.collection.findMany({
+    orderBy: { title: "asc" },
+    include: {
+      products: {
+        where: { product: { status: "ACTIVE" } },
+        orderBy: { position: "asc" },
+        include: {
+          product: { include: { images: { orderBy: { position: "asc" }, take: 1 } } },
+        },
+      },
+    },
+  });
+
+  return rows
+    .map((c) => ({
+      id: c.id,
+      handle: c.handle,
+      title: c.title,
+      // Fall back to the first product's image when the collection has no cover.
+      imageUrl: c.imageUrl || c.products[0]?.product.images[0]?.url || null,
+      count: c.products.length,
+    }))
+    .filter((c) => c.count > 0);
+}
+
+export type ShopCollection = {
+  id: string;
+  handle: string;
+  title: string;
+  descriptionHtml: string;
+  imageUrl: string | null;
+  items: ProductRecord[];
+};
+
+/** A single collection with its active products, for /shop/c/[handle]. */
+export async function shopCollection(handle: string): Promise<ShopCollection | null> {
+  const row = await db.collection.findUnique({
+    where: { handle },
+    include: {
+      products: {
+        where: { product: { status: "ACTIVE" } },
+        orderBy: { position: "asc" },
+        include: {
+          product: { include: { images: { orderBy: { position: "asc" }, take: 1 } } },
+        },
+      },
+    },
+  });
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    handle: row.handle,
+    title: row.title,
+    descriptionHtml: row.descriptionHtml,
+    imageUrl: row.imageUrl || null,
+    items: row.products.map((cp) => toRecord(cp.product)),
+  };
 }
 
 /** Distinct product types among active products, for the browse filter. */

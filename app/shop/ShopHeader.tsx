@@ -62,6 +62,7 @@ export default function ShopHeader() {
 
         <nav className="ml-4 hidden items-center gap-5 sm:flex">
           {link("/shop", "Shop")}
+          {link("/shop/collections", "Categories")}
           {link("/shop/about", "About")}
           {link("/shop/contact", "Contact")}
         </nav>

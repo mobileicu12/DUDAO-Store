@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { money } from "@/lib/business";
 import { currentTradeCustomer, shopProduct, wholesalePrice } from "@/lib/storefront";
 import AddToCart from "../../AddToCart";
+import ProductGallery from "../../ProductGallery";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +13,12 @@ export default async function ProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [customer, product] = await Promise.all([
+  const [customer, detail] = await Promise.all([
     currentTradeCustomer(),
     shopProduct(id),
   ]);
-  if (!product) notFound();
+  if (!detail) notFound();
+  const product = detail.record;
   const isTrade = customer !== null;
 
   return (
@@ -29,14 +31,10 @@ export default async function ProductPage({
       </Link>
 
       <div className="grid gap-8 lg:grid-cols-2">
-        <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-line bg-subtle">
-          {product.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={product.imageUrl} alt={product.title} className="h-full w-full object-cover" />
-          ) : (
-            <span className="text-6xl text-faint">📦</span>
-          )}
-        </div>
+        <ProductGallery
+          images={detail.gallery.length ? detail.gallery : product.imageUrl ? [product.imageUrl] : []}
+          title={product.title}
+        />
 
         <div>
           {product.brand && (
@@ -120,6 +118,18 @@ export default async function ProductPage({
           </div>
         </div>
       </div>
+
+      {detail.descriptionHtml && (
+        <div className="mt-10 max-w-3xl">
+          <h2 className="mb-2 text-sm font-semibold tracking-wide text-muted uppercase">
+            Details
+          </h2>
+          <div
+            className="prose prose-sm max-w-none text-ink-2 [&_a]:text-accent"
+            dangerouslySetInnerHTML={{ __html: detail.descriptionHtml }}
+          />
+        </div>
+      )}
     </div>
   );
 }
