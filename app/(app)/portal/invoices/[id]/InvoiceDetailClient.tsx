@@ -31,6 +31,7 @@ import {
   type Tone,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
+import PdfPreviewModal from "@/components/PdfPreviewModal";
 import { useToast } from "@/components/ui/Toast";
 
 const STATUS_TONE: Record<InvoiceStatus, Tone> = {
@@ -70,6 +71,7 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [sending, setSending] = useState(false);
+  const [preview, setPreview] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/billing/${id}`, { cache: "no-store" });
@@ -286,9 +288,7 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
         }
         actions={
           <>
-            <a href={`/api/public/invoice/${invoice.id}`} target="_blank" rel="noreferrer">
-              <Button>Download PDF</Button>
-            </a>
+            <Button onClick={() => setPreview(true)}>Preview / PDF</Button>
             {waUrl ? (
               <a href={waUrl} target="_blank" rel="noreferrer">
                 <Button className="border-success/40 text-success hover:bg-success-subtle">
@@ -632,6 +632,16 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
         confirmLabel="Delete"
         message="This removes it completely and puts the stock back. There will be no record that it existed. Voiding is usually the safer choice."
       />
+
+      {preview && (
+        <PdfPreviewModal
+          src={`/api/public/invoice/${invoice.id}`}
+          title={`Invoice ${invoice.number}`}
+          subtitle={custName || invoice.walkInName || undefined}
+          filename={`invoice-${invoice.number}.pdf`}
+          onClose={() => setPreview(false)}
+        />
+      )}
     </div>
   );
 }

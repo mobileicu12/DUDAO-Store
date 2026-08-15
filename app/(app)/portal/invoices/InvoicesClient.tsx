@@ -19,6 +19,7 @@ import {
   type Tone,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
+import PdfPreviewModal from "@/components/PdfPreviewModal";
 
 const STATUS_TONE: Record<InvoiceStatus, Tone> = {
   PAID: "success",
@@ -84,6 +85,7 @@ export default function InvoicesClient() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reportsOpen, setReportsOpen] = useState(false);
+  const [preview, setPreview] = useState<InvoiceRecord | null>(null);
   const reportsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -518,12 +520,13 @@ export default function InvoicesClient() {
                       <td className="tnum px-3 py-2.5 text-right text-ink">{money(i.totals.total)}</td>
                       <td className="px-3 py-2.5">
                         <div className="flex justify-end gap-1.5">
-                          <Link
-                            href={`/portal/invoices/${i.id}`}
+                          <button
+                            type="button"
+                            onClick={() => setPreview(i)}
                             className="rounded-md bg-ink px-2 py-1 text-xs font-semibold text-surface hover:opacity-90"
                           >
                             PDF
-                          </Link>
+                          </button>
                           <button
                             type="button"
                             onClick={() => csvFor([i])}
@@ -549,6 +552,16 @@ export default function InvoicesClient() {
           </div>
         )}
       </div>
+
+      {preview && (
+        <PdfPreviewModal
+          src={`/api/public/invoice/${preview.id}`}
+          title={`Invoice ${preview.number}`}
+          subtitle={preview.customer?.name || preview.walkInName || undefined}
+          filename={`invoice-${preview.number}.pdf`}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   type PaymentMethod,
 } from "@/lib/billing-shared";
 import { SEGMENTS, type SegmentKey } from "@/lib/segments";
+import PdfPreviewModal from "@/components/PdfPreviewModal";
 import type { CustomerDetail } from "@/lib/customers";
 import {
   Alert,
@@ -40,6 +41,7 @@ export default function CustomerDetailClient({ id }: { id: string }) {
   const [payOpen, setPayOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [methodFilter, setMethodFilter] = useState("all");
+  const [statementPreview, setStatementPreview] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/customers/${id}`, { cache: "no-store" });
@@ -334,14 +336,9 @@ export default function CustomerDetailClient({ id }: { id: string }) {
               subtitle="Signed links — no login needed to open them."
             />
             <div className="mt-3 space-y-2">
-              <a
-                href={`/api/public/statement/${customer.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="block"
-              >
-                <Button full>Full statement PDF</Button>
-              </a>
+              <Button full onClick={() => setStatementPreview(true)}>
+                Full statement PDF
+              </Button>
             </div>
           </Card>
 
@@ -389,6 +386,16 @@ export default function CustomerDetailClient({ id }: { id: string }) {
           act({ action: "payment", amount, method, note }, "Payment recorded.")
         }
       />
+
+      {statementPreview && (
+        <PdfPreviewModal
+          src={`/api/public/statement/${customer.id}`}
+          title={`Statement — ${customer.name}`}
+          subtitle={customer.company || undefined}
+          filename={`statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`}
+          onClose={() => setStatementPreview(false)}
+        />
+      )}
 
       <EditCustomerModal
         open={editOpen}
