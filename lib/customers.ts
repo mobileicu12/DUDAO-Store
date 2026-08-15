@@ -362,6 +362,61 @@ export async function deleteCustomer(id: string): Promise<void> {
 }
 
 /**
+ * Delete several customers at once, applying the same rule as a single delete:
+ * anyone with invoice history is kept, never silently wiped. Returns how many
+ * went and how many were spared so the caller can tell the user.
+ */
+export async function bulkDeleteCustomers(
+  ids: string[],
+): Promise<{ deleted: number; skipped: number }> {
+  const clean = [...new Set(ids.filter(Boolean))];
+  if (clean.length === 0) return { deleted: 0, skipped: 0 };
+
+  const withHistory = await db.invoice.findMany({
+    where: { customerId: { in: clean } },
+    select: { customerId: true },
+    distinct: ["customerId"],
+  });
+  const blocked = new Set(
+    withHistory.map((r) => r.customerId).filter(Boolean) as string[],
+  );
+  const deletable = clean.filter((id) => !blocked.has(id));
+
+  if (deletable.length) {
+    await db.customer.deleteMany({ where: { id: { in: deletable } } });
+  }
+  return { deleted: deletable.length, skipped: clean.length - deletable.length };
+}
+
+/** Add or remove a set of segments across many customers in one go. */
+export async function bulkCustomerSegments(
+  ids: string[],
+  segments: SegmentKey[],
+  mode: "add" | "remove",
+): Promise<{ updated: number }> {
+  const clean = [...new Set(ids.filter(Boolean))];
+  if (clean.length === 0 || segments.length === 0) return { updated: 0 };
+
+  const rows = await db.customer.findMany({
+    where: { id: { in: clean } },
+    select: { id: true, segments: true },
+  });
+
+  await db.$transaction(
+    rows.map((r) => {
+      const next = new Set(r.segments as SegmentKey[]);
+      if (mode === "add") segments.forEach((s) => next.add(s));
+      else segments.forEach((s) => next.delete(s));
+      return db.customer.update({
+        where: { id: r.id },
+        data: { segments: [...next] },
+      });
+    }),
+  );
+  return { updated: rows.length };
+}
+
+/**
  * Record a payment against the account rather than a specific invoice — the
  * "he dropped £200 off the balance" case. It reduces what they owe overall
  * without being tied to a bill.

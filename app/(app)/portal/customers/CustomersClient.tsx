@@ -20,6 +20,7 @@ import {
   PageHeader,
   SectionLabel,
   Segmented,
+  Select,
   Skeleton,
   StatCard,
 } from "@/components/ui/primitives";
@@ -69,6 +70,9 @@ export default function CustomersClient() {
   const [segment, setSegment] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
   const [todayCust, setTodayCust] = useState<TodayCust[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkSeg, setBulkSeg] = useState<SegmentKey>("shop");
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
     fetch("/api/reports/today-customers", { cache: "no-store" })
@@ -133,6 +137,59 @@ export default function CustomersClient() {
       toast.error((e as Error).message);
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  const allSelected = customers.length > 0 && customers.every((c) => selected.has(c.id));
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const toggleAll = () =>
+    setSelected((prev) =>
+      prev.size === customers.length ? new Set() : new Set(customers.map((c) => c.id)),
+    );
+  const clearSel = () => setSelected(new Set());
+
+  const runBulk = async (
+    action: "delete" | "addSegments" | "removeSegments",
+  ) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (
+      action === "delete" &&
+      !window.confirm(
+        `Delete ${ids.length} customer${ids.length === 1 ? "" : "s"}? Anyone with invoice history is kept automatically.`,
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/customers/bulk", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, ids, segments: [bulkSeg] }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Bulk action failed.");
+      if (action === "delete") {
+        toast.success(
+          `Deleted ${d.deleted}${d.skipped ? ` — kept ${d.skipped} with invoice history` : ""}.`,
+        );
+      } else {
+        toast.success(
+          `${action === "addSegments" ? "Added" : "Removed"} “${bulkSeg}” on ${d.updated} customer${d.updated === 1 ? "" : "s"}.`,
+        );
+      }
+      clearSel();
+      reload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -238,11 +295,69 @@ export default function CustomersClient() {
         </div>
       </div>
 
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent/40 bg-accent-subtle px-3 py-2">
+          <span className="text-sm font-medium text-ink">
+            {selected.size} selected
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Select
+              value={bulkSeg}
+              onChange={(e) => setBulkSeg(e.target.value as SegmentKey)}
+              className="h-9 w-auto"
+              aria-label="Segment to add or remove"
+            >
+              {SEGMENTS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={bulkBusy}
+              onClick={() => runBulk("addSegments")}
+            >
+              Add segment
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={bulkBusy}
+              onClick={() => runBulk("removeSegments")}
+            >
+              Remove
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={bulkBusy}
+              onClick={() => runBulk("delete")}
+            >
+              Delete
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSel}>
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[48rem] border-collapse text-sm">
             <thead className="border-b border-line bg-subtle">
               <tr>
+                <th scope="col" className="w-9 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all customers"
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                </th>
                 {visible.map((d) => (
                   <th
                     key={d.key}
@@ -261,14 +376,14 @@ export default function CustomersClient() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b border-line last:border-0">
-                    <td colSpan={visible.length} className="px-3 py-3">
+                    <td colSpan={visible.length + 1} className="px-3 py-3">
                       <Skeleton className="h-5 w-full" />
                     </td>
                   </tr>
                 ))
               ) : customers.length === 0 ? (
                 <tr>
-                  <td colSpan={visible.length}>
+                  <td colSpan={visible.length + 1}>
                     <EmptyState
                       title={debounced ? "No accounts matched" : "No customers yet"}
                       message={
@@ -290,8 +405,20 @@ export default function CustomersClient() {
                 customers.map((c) => (
                   <tr
                     key={c.id}
-                    className="border-b border-line transition-colors last:border-0 hover:bg-subtle/60"
+                    className={cx(
+                      "border-b border-line transition-colors last:border-0 hover:bg-subtle/60",
+                      selected.has(c.id) && "bg-accent-subtle/50",
+                    )}
                   >
+                    <td className="px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggleOne(c.id)}
+                        aria-label={`Select ${c.name}`}
+                        className="h-4 w-4 accent-[var(--accent)]"
+                      />
+                    </td>
                     {isVisible("name") && (
                       <td className="px-3 py-2.5">
                         <Link
