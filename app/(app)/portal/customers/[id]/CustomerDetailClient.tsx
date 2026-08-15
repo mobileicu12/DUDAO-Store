@@ -277,19 +277,29 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                       {new Date(p.takenAt).toLocaleDateString("en-GB")}
                     </span>
                     {!p.revoked && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          act(
-                            { action: "revoke-payment", paymentId: p.id },
-                            "Payment revoked.",
-                          )
-                        }
-                        className="text-xs font-medium text-muted hover:text-danger"
-                      >
-                        Revoke
-                      </button>
+                      <>
+                        <a
+                          href={`/api/customers/${customer.id}/receipt?paymentId=${p.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs font-medium text-muted hover:text-accent"
+                        >
+                          Receipt
+                        </a>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            act(
+                              { action: "revoke-payment", paymentId: p.id },
+                              "Payment revoked.",
+                            )
+                          }
+                          className="text-xs font-medium text-muted hover:text-danger"
+                        >
+                          Revoke
+                        </button>
+                      </>
                     )}
                   </li>
                 ))}
