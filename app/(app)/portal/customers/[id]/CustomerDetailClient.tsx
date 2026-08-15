@@ -13,6 +13,7 @@ import {
 } from "@/lib/billing-shared";
 import { SEGMENTS, type SegmentKey } from "@/lib/segments";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
+import { PhoneField } from "@/components/ui/PhoneField";
 import type { CustomerDetail } from "@/lib/customers";
 import {
   Alert,
@@ -597,7 +598,7 @@ function EditCustomerModal({
           <Input value={form.company} onChange={(e) => set({ company: e.target.value })} />
         </Field>
         <Field label="Phone">
-          <Input value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+          <PhoneField value={form.phone} onChange={(v) => set({ phone: v })} />
         </Field>
         <Field label="Email" className="sm:col-span-2">
           <Input value={form.email} onChange={(e) => set({ email: e.target.value })} />

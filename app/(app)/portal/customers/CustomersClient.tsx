@@ -24,6 +24,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
+import { PhoneField } from "@/components/ui/PhoneField";
 import { useToast } from "@/components/ui/Toast";
 
 type ColKey =
@@ -477,12 +478,7 @@ function AddCustomerModal({
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Phone">
-            <Input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="07…"
-            />
+            <PhoneField value={phone} onChange={setPhone} />
           </Field>
           <Field label="Email">
             <Input
