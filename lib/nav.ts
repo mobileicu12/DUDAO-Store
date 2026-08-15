@@ -71,6 +71,13 @@ export const NAV: NavItem[] = [
     group: "Sell",
     perm: "orders",
   },
+  {
+    href: "/portal/cash-up",
+    label: "Cash up",
+    icon: "M3.5 7.5h17v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1zM3.5 7.5 6 3.5h12l2.5 4M12 11.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+    group: "Sell",
+    perm: "billing",
+  },
 
   {
     href: "/portal/inventory",

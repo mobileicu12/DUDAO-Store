@@ -44,6 +44,31 @@ model AuditLog {
   @@index([action])
 }
 
+/// End-of-day cash-up. Staff count the drawer at close and record it against
+/// what the till says should be there: variance = counted − float − expected
+/// cash takings. Kept as history so a recurring discrepancy is visible.
+model CashUp {
+  id          String   @id @default(cuid())
+  /// The trading day this settles, as YYYY-MM-DD.
+  businessDay String
+  createdAt   DateTime @default(now())
+  who         String   @default("")
+  /// Opening cash float left in the drawer.
+  float        Decimal @default(0) @db.Decimal(12, 2)
+  /// Cash takings the till expected today (non-revoked cash payments).
+  expectedCash Decimal @default(0) @db.Decimal(12, 2)
+  /// What was physically counted in the drawer.
+  countedCash  Decimal @default(0) @db.Decimal(12, 2)
+  /// countedCash − float − expectedCash. Negative = short, positive = over.
+  variance     Decimal @default(0) @db.Decimal(12, 2)
+  /// Full takings split {cash, card, bank, account, total} at cash-up time.
+  byMethod    Json
+  note        String   @default("")
+
+  @@index([businessDay])
+  @@index([createdAt])
+}
+
 /// In-database backup history. Each row is a full JSON snapshot of every other
 /// table (never of this table — that would nest backups inside backups). A
 /// convenience/rollback store that sits alongside the off-site Google Drive
