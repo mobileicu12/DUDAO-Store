@@ -15,7 +15,8 @@ export type PermKey =
   | "collections"
   | "reports"
   | "settings"
-  | "users";
+  | "users"
+  | "logs";
 
 export type PermDef = {
   key: PermKey;
@@ -69,6 +70,12 @@ export const PERMISSIONS: PermDef[] = [
     key: "users",
     label: "Team",
     description: "Invite staff, set passwords and decide who can do what.",
+  },
+  {
+    key: "logs",
+    label: "Activity log",
+    description:
+      "See the audit trail of every invoice and payment change, and restore deleted invoices. Grant this without handing over Settings.",
   },
 ];
 

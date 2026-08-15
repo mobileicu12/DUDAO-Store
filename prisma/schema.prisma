@@ -18,6 +18,32 @@ datasource db {
   provider = "postgresql"
 }
 
+/// Append-only audit trail for anything that moves money. Every invoice edit,
+/// void, deletion, restore and every payment recorded or revoked is written
+/// here with who did it and when. When a balance looks wrong, this is what lets
+/// you reconstruct how it got that way. A hard-deleted invoice keeps its full
+/// snapshot in `data`, so it can be restored from the log.
+model AuditLog {
+  id     String   @id @default(cuid())
+  at     DateTime @default(now())
+  /// Actor email, or "master-password", or "unknown". Never blocks the action.
+  who    String   @default("")
+  /// Dotted verb, e.g. "invoice.void".
+  action String
+  /// Id of the invoice/customer the action applied to.
+  ref    String   @default("")
+  /// Human label, e.g. DUD-2026-0042.
+  name   String   @default("")
+  /// Short summary, including amounts.
+  detail String   @default("")
+  /// Optional payload — the full invoice snapshot for a deletion, so it can be
+  /// restored from the log.
+  data   Json?
+
+  @@index([at])
+  @@index([action])
+}
+
 /// In-database backup history. Each row is a full JSON snapshot of every other
 /// table (never of this table — that would nest backups inside backups). A
 /// convenience/rollback store that sits alongside the off-site Google Drive

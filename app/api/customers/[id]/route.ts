@@ -9,6 +9,7 @@ import {
   updateCustomer,
 } from "@/lib/customers";
 import { revokePayment, type PaymentMethod } from "@/lib/billing";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +53,13 @@ export async function DELETE(_req: Request, { params }: Ctx) {
 
   try {
     const { id } = await params;
+    const existing = await getCustomer(id);
     await deleteCustomer(id);
+    await audit("customer.delete", {
+      ref: id,
+      name: existing?.name,
+      detail: existing?.name ? `Deleted account "${existing.name}"` : "Customer deleted",
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err, "delete this customer");
@@ -76,20 +83,33 @@ export async function POST(req: Request, { params }: Ctx) {
     };
 
     switch (body.action) {
-      case "payment":
+      case "payment": {
+        const amount = Number(body.amount) || 0;
         await recordAccountPayment({
           customerId: id,
-          amount: Number(body.amount) || 0,
+          amount,
           method: body.method ?? "cash",
           note: body.note,
           staffEmail: caller.email,
         });
+        await audit("customer.payment.add", {
+          ref: id,
+          detail: `£${amount.toFixed(2)} ${body.method ?? "cash"} held on account${
+            body.note ? ` — ${body.note}` : ""
+          }`,
+        });
         break;
+      }
 
-      case "revoke-payment":
+      case "revoke-payment": {
         if (!body.paymentId) throw invalid("Which payment should be revoked?");
         await revokePayment(body.paymentId);
+        await audit("customer.payment.revoke", {
+          ref: id,
+          detail: `Revoked account payment ${body.paymentId}`,
+        });
         break;
+      }
 
       case "trade-code":
         return NextResponse.json({ code: await generateTradeCode(id) });

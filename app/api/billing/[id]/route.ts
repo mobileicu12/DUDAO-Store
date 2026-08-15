@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { errorResponse, requirePermission } from "@/lib/guard";
 import { deleteInvoice, getInvoice, updateInvoice } from "@/lib/billing";
 import { invoiceSharePath } from "@/lib/invoice-link";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +36,13 @@ export async function PATCH(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
     const body = await req.json();
-    return NextResponse.json(await updateInvoice(id, body));
+    const invoice = await updateInvoice(id, body);
+    await audit("invoice.update", {
+      ref: invoice.id,
+      name: invoice.number,
+      detail: `Edited — total now £${invoice.totals.total.toFixed(2)}`,
+    });
+    return NextResponse.json(invoice);
   } catch (err) {
     return errorResponse(err, "save this invoice");
   }
@@ -47,7 +54,17 @@ export async function DELETE(_req: Request, { params }: Ctx) {
 
   try {
     const { id } = await params;
-    await deleteInvoice(id);
+    const removed = await deleteInvoice(id);
+    // The full snapshot goes into the audit entry so the invoice can be
+    // restored from the Activity log — a hard delete is otherwise irreversible.
+    await audit("invoice.delete", {
+      ref: id,
+      name: removed.number,
+      detail: `Deleted — total £${removed.total.toFixed(2)}${
+        removed.customerName ? ` — ${removed.customerName}` : ""
+      }`,
+      data: removed.snapshot,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err, "delete this invoice");

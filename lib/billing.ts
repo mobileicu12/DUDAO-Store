@@ -1,5 +1,5 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { DataError, db, invalid, money2, notFound, num, numOrNull } from "./db";
 import { money } from "./business";
 import { nextInvoiceNumber } from "./settings";
@@ -607,10 +607,52 @@ export async function duplicateInvoice(
   });
 }
 
-export async function deleteInvoice(id: string): Promise<void> {
+/**
+ * A hard-deleted invoice, captured whole so it can be recreated from the audit
+ * log. Payments are never included — an invoice can only be deleted when it has
+ * none (otherwise you void it), so there is nothing financial to rebuild.
+ */
+export type DeletedInvoiceSnapshot = {
+  number: string;
+  customerId: string | null;
+  /** The account customer's name at deletion time — for display in the bin. */
+  customerName: string;
+  walkInName: string;
+  walkInPhone: string;
+  segment: string;
+  staffEmail: string;
+  staffName: string;
+  status: string;
+  taxable: boolean;
+  taxRate: number;
+  discount: number;
+  notes: string;
+  issuedAt: string;
+  lines: {
+    productId: string | null;
+    title: string;
+    sku: string;
+    quantity: number;
+    unitPrice: number;
+    position: number;
+  }[];
+};
+
+export type DeletedInvoiceSummary = {
+  snapshot: DeletedInvoiceSnapshot;
+  number: string;
+  total: number;
+  customerName: string;
+};
+
+export async function deleteInvoice(id: string): Promise<DeletedInvoiceSummary> {
   const existing = await db.invoice.findUnique({
     where: { id },
-    include: { lines: true, payments: { where: { revoked: false } } },
+    include: {
+      lines: { orderBy: { position: "asc" } },
+      payments: { where: { revoked: false } },
+      customer: { select: { name: true } },
+    },
   });
   if (!existing) throw notFound("invoice");
   if (existing.payments.length > 0) {
@@ -618,6 +660,39 @@ export async function deleteInvoice(id: string): Promise<void> {
       "This invoice has payments against it. Void it instead so the ledger stays correct.",
     );
   }
+
+  const snapshot: DeletedInvoiceSnapshot = {
+    number: existing.number,
+    customerId: existing.customerId,
+    customerName: existing.customer?.name ?? "",
+    walkInName: existing.walkInName,
+    walkInPhone: existing.walkInPhone,
+    segment: existing.segment,
+    staffEmail: existing.staffEmail,
+    staffName: existing.staffName,
+    status: existing.status,
+    taxable: existing.taxable,
+    taxRate: num(existing.taxRate),
+    discount: num(existing.discount),
+    notes: existing.notes,
+    issuedAt: existing.issuedAt.toISOString(),
+    lines: existing.lines.map((l, i) => ({
+      productId: l.productId,
+      title: l.title,
+      sku: l.sku,
+      quantity: l.quantity,
+      unitPrice: num(l.unitPrice),
+      position: i,
+    })),
+  };
+
+  const total = calcTotals({
+    lines: snapshot.lines,
+    discount: snapshot.discount,
+    taxable: snapshot.taxable,
+    taxRate: snapshot.taxRate,
+    paid: 0,
+  }).total;
 
   await db.$transaction(async (tx) => {
     for (const line of existing.lines) {
@@ -629,6 +704,128 @@ export async function deleteInvoice(id: string): Promise<void> {
     }
     await tx.invoice.delete({ where: { id } });
   });
+
+  return {
+    snapshot,
+    number: existing.number,
+    total,
+    customerName: existing.customer?.name ?? existing.walkInName ?? "",
+  };
+}
+
+/**
+ * Recreate a hard-deleted invoice from its audit snapshot, restoring the
+ * original number, dates and staff, and re-deducting stock for catalog lines.
+ * Refuses if that number is already live again — restoring twice would create a
+ * duplicate.
+ */
+export async function restoreDeletedInvoice(
+  snapshot: DeletedInvoiceSnapshot,
+): Promise<InvoiceRecord> {
+  const clash = await db.invoice.findUnique({
+    where: { number: snapshot.number },
+    select: { id: true },
+  });
+  if (clash) {
+    throw invalid(`Invoice ${snapshot.number} already exists — nothing to restore.`);
+  }
+
+  const created = await db.$transaction(async (tx) => {
+    const invoice = await tx.invoice.create({
+      data: {
+        number: snapshot.number,
+        customerId: snapshot.customerId,
+        walkInName: snapshot.walkInName,
+        walkInPhone: snapshot.walkInPhone,
+        segment: snapshot.segment,
+        staffEmail: snapshot.staffEmail,
+        staffName: snapshot.staffName,
+        status: snapshot.status,
+        taxable: snapshot.taxable,
+        taxRate: snapshot.taxRate,
+        discount: money2(snapshot.discount),
+        notes: snapshot.notes,
+        issuedAt: new Date(snapshot.issuedAt),
+        lines: {
+          create: snapshot.lines.map((l, i) => ({
+            productId: l.productId || null,
+            title: l.title,
+            sku: l.sku,
+            quantity: l.quantity,
+            unitPrice: money2(l.unitPrice),
+            position: i,
+          })),
+        },
+      },
+      select: { id: true },
+    });
+
+    for (const line of snapshot.lines) {
+      if (!line.productId) continue;
+      await tx.product.update({
+        where: { id: line.productId },
+        data: { stock: { decrement: line.quantity } },
+      });
+    }
+
+    return invoice.id;
+  });
+
+  const invoice = await getInvoice(created);
+  if (!invoice) throw notFound("invoice");
+  return invoice;
+}
+
+export type DeletedInvoiceListItem = {
+  id: string; // audit-log row id
+  invoiceNo: string;
+  customer: string;
+  total: string;
+  createdAt: string;
+};
+
+/**
+ * The recoverable-deletions bin: invoice.delete audit rows whose invoice number
+ * is not currently live. A number that exists again (restored, or re-created by
+ * hand) drops off the list.
+ */
+export async function listDeletedInvoices(): Promise<DeletedInvoiceListItem[]> {
+  const rows = await db.auditLog.findMany({
+    where: { action: "invoice.delete", NOT: { data: { equals: Prisma.DbNull } } },
+    orderBy: { at: "desc" },
+    take: 100,
+  });
+  if (rows.length === 0) return [];
+
+  const numbers = rows
+    .map((r) => (r.data as { number?: string } | null)?.number)
+    .filter((n): n is string => Boolean(n));
+  const live = await db.invoice.findMany({
+    where: { number: { in: numbers } },
+    select: { number: true },
+  });
+  const liveSet = new Set(live.map((i) => i.number));
+
+  const out: DeletedInvoiceListItem[] = [];
+  for (const r of rows) {
+    const snap = r.data as DeletedInvoiceSnapshot | null;
+    if (!snap?.number || liveSet.has(snap.number)) continue;
+    const total = calcTotals({
+      lines: snap.lines ?? [],
+      discount: snap.discount ?? 0,
+      taxable: snap.taxable ?? false,
+      taxRate: snap.taxRate ?? 0,
+      paid: 0,
+    }).total;
+    out.push({
+      id: r.id,
+      invoiceNo: snap.number,
+      customer: snap.customerName || snap.walkInName || "—",
+      total: total.toFixed(2),
+      createdAt: r.at.toISOString(),
+    });
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */

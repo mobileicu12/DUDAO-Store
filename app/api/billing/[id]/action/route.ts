@@ -9,6 +9,7 @@ import {
   voidInvoice,
   type PaymentMethod,
 } from "@/lib/billing";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,16 +37,24 @@ export async function POST(req: Request, { params }: Ctx) {
     };
 
     switch (body.action) {
-      case "payment":
-        return NextResponse.json(
-          await recordPayment({
-            invoiceId: id,
-            amount: Number(body.amount) || 0,
-            method: body.method ?? "cash",
-            note: body.note,
-            staffEmail: caller.email,
-          }),
-        );
+      case "payment": {
+        const amount = Number(body.amount) || 0;
+        const invoice = await recordPayment({
+          invoiceId: id,
+          amount,
+          method: body.method ?? "cash",
+          note: body.note,
+          staffEmail: caller.email,
+        });
+        await audit("invoice.payment.add", {
+          ref: id,
+          name: invoice.number,
+          detail: `£${amount.toFixed(2)} ${body.method ?? "cash"}${
+            body.note ? ` — ${body.note}` : ""
+          }`,
+        });
+        return NextResponse.json(invoice);
+      }
 
       case "pay-balance": {
         const invoice = await getInvoice(id);
@@ -53,34 +62,59 @@ export async function POST(req: Request, { params }: Ctx) {
         if (invoice.totals.balance <= 0) {
           throw invalid("This invoice is already settled.");
         }
-        return NextResponse.json(
-          await recordPayment({
-            invoiceId: id,
-            amount: invoice.totals.balance,
-            method: body.method ?? "cash",
-            note: body.note,
-            staffEmail: caller.email,
-          }),
-        );
+        const amount = invoice.totals.balance;
+        const updated = await recordPayment({
+          invoiceId: id,
+          amount,
+          method: body.method ?? "cash",
+          note: body.note,
+          staffEmail: caller.email,
+        });
+        await audit("invoice.payment.add", {
+          ref: id,
+          name: updated.number,
+          detail: `£${amount.toFixed(2)} ${body.method ?? "cash"} — balance settled`,
+        });
+        return NextResponse.json(updated);
       }
 
       case "revoke-payment": {
         if (!body.paymentId) throw invalid("Which payment should be revoked?");
+        const before = await getInvoice(id);
+        const gone = before?.payments.find((p) => p.id === body.paymentId);
         await revokePayment(body.paymentId);
+        await audit("invoice.payment.revoke", {
+          ref: id,
+          name: before?.number,
+          detail: gone
+            ? `Removed £${gone.amount.toFixed(2)} ${gone.method}`
+            : "Payment revoked",
+        });
         return NextResponse.json(await getInvoice(id));
       }
 
-      case "void":
-        return NextResponse.json(await voidInvoice(id));
+      case "void": {
+        const voided = await voidInvoice(id);
+        await audit("invoice.void", {
+          ref: id,
+          name: voided.number,
+          detail: "Voided — stock restored and payments revoked",
+        });
+        return NextResponse.json(voided);
+      }
 
-      case "duplicate":
-        return NextResponse.json(
-          await duplicateInvoice(id, {
-            email: caller.email,
-            name: caller.name,
-          }),
-          { status: 201 },
-        );
+      case "duplicate": {
+        const copy = await duplicateInvoice(id, {
+          email: caller.email,
+          name: caller.name,
+        });
+        await audit("invoice.duplicate", {
+          ref: id,
+          name: copy.number,
+          detail: `Copied to ${copy.number}`,
+        });
+        return NextResponse.json(copy, { status: 201 });
+      }
 
       default:
         throw invalid("That action is not recognised.");

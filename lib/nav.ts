@@ -123,6 +123,14 @@ export const NAV: NavItem[] = [
     group: "Admin",
     perm: "users",
   },
+  {
+    href: "/portal/logs",
+    label: "Activity log",
+    short: "Log",
+    icon: "M8 6.5h9M8 12h9M8 17.5h9M4 6.5h.01M4 12h.01M4 17.5h.01",
+    group: "Admin",
+    perm: "logs",
+  },
 ];
 
 export function visibleNav(items: NavItem[], me: Me | null): NavItem[] {

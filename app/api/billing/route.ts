@@ -8,6 +8,7 @@ import {
   type PaymentMethod,
 } from "@/lib/billing";
 import type { SegmentKey } from "@/lib/segments";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,6 +68,15 @@ export async function POST(req: Request) {
             note: body.payment.note ?? "",
           }
         : null,
+    });
+
+    await audit("invoice.create", {
+      ref: invoice.id,
+      name: invoice.number,
+      who: caller.email,
+      detail: `Total £${invoice.totals.total.toFixed(2)}${
+        invoice.totals.paid > 0 ? `, paid £${invoice.totals.paid.toFixed(2)}` : ""
+      }${invoice.customer ? ` — ${invoice.customer.name}` : ""}`,
     });
 
     return NextResponse.json(invoice, { status: 201 });
