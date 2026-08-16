@@ -43,6 +43,8 @@ export type StatementDoc = {
   totalPaid: number;
   outstanding: number;
   generatedAt: string;
+  /** Set for a date-range statement; the opening balance is then as-of `from`. */
+  period?: { from: string; to: string };
 };
 
 function fmt(amount: number, currency: string): string {
@@ -85,7 +87,9 @@ export function buildStatementDoc(
   doc.setFontSize(8.5);
   doc.setTextColor(MUTED);
   doc.text(
-    `As at ${formatDate(statement.generatedAt)}`,
+    statement.period
+      ? `${formatDate(statement.period.from)} — ${formatDate(statement.period.to)}`
+      : `As at ${formatDate(statement.generatedAt)}`,
     right,
     y + 8,
     { align: "right" },

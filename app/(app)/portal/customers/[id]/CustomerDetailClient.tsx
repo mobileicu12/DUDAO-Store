@@ -42,7 +42,9 @@ export default function CustomerDetailClient({ id }: { id: string }) {
   const [payOpen, setPayOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [methodFilter, setMethodFilter] = useState("all");
-  const [statementPreview, setStatementPreview] = useState(false);
+  const [stmtSrc, setStmtSrc] = useState<string | null>(null);
+  const [stFrom, setStFrom] = useState("");
+  const [stTo, setStTo] = useState(new Date().toISOString().slice(0, 10));
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/customers/${id}`, { cache: "no-store" });
@@ -359,12 +361,52 @@ export default function CustomerDetailClient({ id }: { id: string }) {
           <Card>
             <CardHeader
               title="Documents"
-              subtitle="Signed links — no login needed to open them."
+              subtitle="Statements — full history or a chosen period."
             />
-            <div className="mt-3 space-y-2">
-              <Button full onClick={() => setStatementPreview(true)}>
+            <div className="mt-3 space-y-3">
+              <Button
+                full
+                onClick={() =>
+                  setStmtSrc(`/api/public/statement/${customer.id}`)
+                }
+              >
                 Full statement PDF
               </Button>
+
+              <div className="rounded-lg border border-line p-3">
+                <p className="mb-2 text-xs font-medium text-muted">
+                  Statement for a period
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="From">
+                    <Input
+                      type="date"
+                      value={stFrom}
+                      onChange={(e) => setStFrom(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="To">
+                    <Input
+                      type="date"
+                      value={stTo}
+                      onChange={(e) => setStTo(e.target.value)}
+                    />
+                  </Field>
+                </div>
+                <Button
+                  full
+                  variant="secondary"
+                  className="mt-2"
+                  disabled={!stFrom || !stTo}
+                  onClick={() =>
+                    setStmtSrc(
+                      `/api/public/statement/${customer.id}?from=${stFrom}&to=${stTo}`,
+                    )
+                  }
+                >
+                  Period statement PDF
+                </Button>
+              </div>
             </div>
           </Card>
 
@@ -413,13 +455,13 @@ export default function CustomerDetailClient({ id }: { id: string }) {
         }
       />
 
-      {statementPreview && (
+      {stmtSrc && (
         <PdfPreviewModal
-          src={`/api/public/statement/${customer.id}`}
+          src={stmtSrc}
           title={`Statement — ${customer.name}`}
           subtitle={customer.company || undefined}
           filename={`statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`}
-          onClose={() => setStatementPreview(false)}
+          onClose={() => setStmtSrc(null)}
         />
       )}
 

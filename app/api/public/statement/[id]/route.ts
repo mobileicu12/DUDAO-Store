@@ -34,11 +34,41 @@ export async function GET(
   const customer = await getCustomer(id);
   if (!customer) return new NextResponse("Not found", { status: 404 });
 
+  // A date-range ("period") statement: opening balance is as-of `from`, and
+  // only entries within [from, to] are listed. Without a range it's the full
+  // as-at statement as before.
+  const fromParam = url.searchParams.get("from");
+  const toParam = url.searchParams.get("to");
+  const period =
+    fromParam && toParam ? { from: fromParam, to: toParam } : null;
+  const fromMs = period ? +new Date(`${period.from}T00:00:00`) : -Infinity;
+  const toMs = period ? +new Date(`${period.to}T23:59:59.999`) : Infinity;
+  const before = (iso: string) => +new Date(iso) < fromMs;
+  const inRange = (iso: string) => {
+    const t = +new Date(iso);
+    return t >= fromMs && t <= toMs;
+  };
+
+  // Balance carried forward is dated to the account's creation — before any
+  // period — so it always seeds the opening figure.
+  let openingBalance = customer.openingBalance;
+  if (period) {
+    for (const inv of customer.invoices) {
+      if (inv.status === "VOID") continue;
+      if (before(inv.issuedAt)) openingBalance += inv.total;
+    }
+    for (const p of customer.ledger) {
+      if (p.revoked) continue;
+      if (before(p.takenAt)) openingBalance -= p.amount;
+    }
+  }
+  openingBalance = Math.round(openingBalance * 100) / 100;
+
   // Interleave invoices and payments in date order so the running balance
   // reads the way the customer experienced it.
   const entries: StatementEntry[] = [];
 
-  if (customer.openingBalance !== 0) {
+  if (!period && customer.openingBalance !== 0) {
     entries.push({
       date: customer.createdAt,
       kind: "opening",
@@ -48,8 +78,12 @@ export async function GET(
     });
   }
 
+  let periodBilled = 0;
+  let periodPaid = 0;
   for (const inv of customer.invoices) {
     if (inv.status === "VOID") continue;
+    if (period && !inRange(inv.issuedAt)) continue;
+    periodBilled += inv.total;
     entries.push({
       date: inv.issuedAt,
       kind: "invoice",
@@ -61,6 +95,8 @@ export async function GET(
 
   for (const p of customer.ledger) {
     if (p.revoked) continue;
+    if (period && !inRange(p.takenAt)) continue;
+    periodPaid += p.amount;
     entries.push({
       date: p.takenAt,
       kind: "payment",
@@ -71,6 +107,10 @@ export async function GET(
   }
 
   entries.sort((a, b) => a.date.localeCompare(b.date));
+
+  const outstanding = period
+    ? Math.round((openingBalance + periodBilled - periodPaid) * 100) / 100
+    : customer.outstanding;
 
   const pdf = statementPdfBuffer(
     {
@@ -84,11 +124,12 @@ export async function GET(
         email: customer.email,
       },
       entries,
-      openingBalance: customer.openingBalance,
-      totalBilled: customer.totalBilled,
-      totalPaid: customer.totalPaid,
-      outstanding: customer.outstanding,
+      openingBalance,
+      totalBilled: period ? Math.round(periodBilled * 100) / 100 : customer.totalBilled,
+      totalPaid: period ? Math.round(periodPaid * 100) / 100 : customer.totalPaid,
+      outstanding,
       generatedAt: new Date().toISOString(),
+      period: period ?? undefined,
     },
     await businessForDocs(),
   );
