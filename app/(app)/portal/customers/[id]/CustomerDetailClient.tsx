@@ -7,7 +7,7 @@ import { money } from "@/lib/business";
 import {
   methodLabel,
   PAYMENT_METHODS,
-  STATUS_LABEL,
+  statusView,
   type InvoiceStatus,
   type PaymentMethod,
 } from "@/lib/billing-shared";
@@ -194,17 +194,14 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                     >
                       {i.number}
                     </Link>
-                    <Badge
-                      tone={
-                        i.status === "PAID"
-                          ? "success"
-                          : i.status === "VOID"
-                            ? "danger"
-                            : "warning"
-                      }
-                    >
-                      {STATUS_LABEL[i.status as InvoiceStatus] ?? i.status}
-                    </Badge>
+                    {(() => {
+                      const sv = statusView(
+                        i.status as InvoiceStatus,
+                        i.paid,
+                        i.balance,
+                      );
+                      return <Badge tone={sv.tone}>{sv.label}</Badge>;
+                    })()}
                     <span className="w-24 text-right text-xs text-muted">
                       {new Date(i.issuedAt).toLocaleDateString("en-GB")}
                     </span>

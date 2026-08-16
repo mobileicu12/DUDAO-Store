@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { money } from "@/lib/business";
-import { STATUS_LABEL, type InvoiceStatus } from "@/lib/billing-shared";
+import { statusView } from "@/lib/billing-shared";
 import { SEGMENTS, segmentDef } from "@/lib/segments";
 import type { InvoiceRecord } from "@/lib/billing";
 import { useCanSeeFinance } from "@/lib/use-me";
@@ -16,17 +16,9 @@ import {
   PageHeader,
   Skeleton,
   StatCard,
-  type Tone,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
-
-const STATUS_TONE: Record<InvoiceStatus, Tone> = {
-  PAID: "success",
-  UNPAID: "warning",
-  DRAFT: "neutral",
-  VOID: "danger",
-};
 
 type Summary = { count: number; billed: number; paid: number; outstanding: number };
 type Preset = "today" | "7days" | "month" | "all";
@@ -200,7 +192,7 @@ export default function InvoicesClient() {
         i.customer?.name || i.walkInName || "Walk-in",
         segmentDef(i.segment)?.label ?? i.segment,
         i.staffName,
-        STATUS_LABEL[i.status],
+        statusView(i.status, i.totals.paid, i.totals.balance).label,
         i.totals.total.toFixed(2),
         i.totals.paid.toFixed(2),
         i.totals.balance.toFixed(2),
@@ -510,9 +502,18 @@ export default function InvoicesClient() {
                       </td>
                       <td className="px-3 py-2.5 text-muted">{i.staffName || "—"}</td>
                       <td className="px-3 py-2.5">
-                        <Badge tone={STATUS_TONE[i.status]} dot>
-                          {STATUS_LABEL[i.status]}
-                        </Badge>
+                        {(() => {
+                          const sv = statusView(
+                            i.status,
+                            i.totals.paid,
+                            i.totals.balance,
+                          );
+                          return (
+                            <Badge tone={sv.tone} dot>
+                              {sv.label}
+                            </Badge>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2.5 text-muted">
                         {new Date(i.issuedAt).toLocaleDateString("en-GB")}

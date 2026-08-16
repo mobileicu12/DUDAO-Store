@@ -75,3 +75,22 @@ export const STATUS_LABEL: Record<InvoiceStatus, string> = {
   PAID: "Paid",
   VOID: "Void",
 };
+
+export type StatusTone = "neutral" | "success" | "warning" | "danger" | "info";
+
+/**
+ * How an invoice's payment state should read, deriving "Part-paid" when some
+ * money has been taken but a balance remains. Single source of truth so the
+ * list, the detail page and the customer ledger never disagree.
+ */
+export function statusView(
+  status: InvoiceStatus,
+  paid: number,
+  balance: number,
+): { label: string; tone: StatusTone } {
+  if (status === "VOID") return { label: "Void", tone: "neutral" };
+  if (status === "PAID") return { label: "Paid", tone: "success" };
+  if (status === "DRAFT") return { label: "Draft", tone: "neutral" };
+  if (paid > 0.001 && balance > 0.001) return { label: "Part-paid", tone: "info" };
+  return { label: "Unpaid", tone: "warning" };
+}

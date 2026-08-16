@@ -5,10 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { money, BUSINESS } from "@/lib/business";
 import {
-  methodLabel,
   PAYMENT_METHODS,
-  STATUS_LABEL,
-  type InvoiceStatus,
+  statusView,
   type PaymentMethod,
 } from "@/lib/billing-shared";
 import { segmentDef } from "@/lib/segments";
@@ -28,18 +26,10 @@ import {
   Select,
   Skeleton,
   Textarea,
-  type Tone,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
 import { useToast } from "@/components/ui/Toast";
-
-const STATUS_TONE: Record<InvoiceStatus, Tone> = {
-  PAID: "success",
-  UNPAID: "warning",
-  DRAFT: "neutral",
-  VOID: "danger",
-};
 
 type DraftLine = {
   key: string;
@@ -264,9 +254,18 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
         title={invoice.number}
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
-            <Badge tone={STATUS_TONE[invoice.status]} dot>
-              {STATUS_LABEL[invoice.status]}
-            </Badge>
+            {(() => {
+              const sv = statusView(
+                invoice.status,
+                invoice.totals.paid,
+                invoice.totals.balance,
+              );
+              return (
+                <Badge tone={sv.tone} dot>
+                  {sv.label}
+                </Badge>
+              );
+            })()}
             {seg && (
               <span className={cx("rounded-md px-2 py-0.5 text-xs font-medium", seg.badge)}>
                 {seg.label}
