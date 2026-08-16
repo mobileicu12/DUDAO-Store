@@ -5,6 +5,7 @@ import Link from "next/link";
 import { BUSINESS, money } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
 import FinanceRequestButton from "@/components/FinanceRequestButton";
+import FinanceAccessPanel from "@/components/FinanceAccessPanel";
 import type { CatalogStats } from "@/app/api/stats/route";
 import {
   Alert,
@@ -122,8 +123,13 @@ export default function DashboardClient() {
         </div>
       )}
 
+      {/* Owner: approve/deny staff requests to view financial figures (as MICU). */}
+      <div className="mb-6 empty:mb-0">
+        <FinanceAccessPanel />
+      </div>
+
       {/* Today's takings — dark hero, mirrors the counter's end-of-day view. */}
-      <section className="mb-6 overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] p-5 text-white shadow-lg sm:p-6">
+      <section className="mb-6 overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-neutral-900 to-neutral-800 p-5 text-white shadow-lg sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-[#f9a03a] uppercase">
