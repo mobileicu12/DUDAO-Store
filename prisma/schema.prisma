@@ -92,10 +92,16 @@ model CashUp {
   float        Decimal @default(0) @db.Decimal(12, 2)
   /// Cash takings the till expected today (non-revoked cash payments).
   expectedCash Decimal @default(0) @db.Decimal(12, 2)
+  /// Cash expenses paid out of the drawer today (reduce expected cash).
+  cashExpenses Decimal @default(0) @db.Decimal(12, 2)
   /// What was physically counted in the drawer.
   countedCash  Decimal @default(0) @db.Decimal(12, 2)
-  /// countedCash − float − expectedCash. Negative = short, positive = over.
+  /// countedCash − float − (expectedCash − cashExpenses). − short, + over.
   variance     Decimal @default(0) @db.Decimal(12, 2)
+  /// Card terminal total counted at close (optional second reconciliation).
+  countedCard  Decimal @default(0) @db.Decimal(12, 2)
+  /// countedCard − expected card takings.
+  cardVariance Decimal @default(0) @db.Decimal(12, 2)
   /// Full takings split {cash, card, bank, account, total} at cash-up time.
   byMethod    Json
   note        String   @default("")

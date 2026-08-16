@@ -32,6 +32,7 @@ export async function POST(req: Request) {
     const caller = (await currentCaller())!;
     const body = (await req.json()) as {
       countedCash?: number;
+      countedCard?: number;
       float?: number;
       note?: string;
     };
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
 
     const record = await recordCashUp({
       countedCash: Number(body.countedCash),
+      countedCard: Number(body.countedCard) || 0,
       float: Number(body.float) || 0,
       note: body.note,
       who: caller.name || caller.email,
@@ -48,9 +50,11 @@ export async function POST(req: Request) {
 
     await audit("cashup.record", {
       name: record.businessDay,
-      detail: `Counted £${record.countedCash.toFixed(2)}, expected £${record.expectedCash.toFixed(
+      detail: `Counted £${record.countedCash.toFixed(2)} cash (float £${record.float.toFixed(
         2,
-      )} + £${record.float.toFixed(2)} float — variance £${record.variance.toFixed(2)}`,
+      )}, expected £${record.expectedCash.toFixed(2)}) — cash variance £${record.variance.toFixed(
+        2,
+      )}${record.countedCard ? `; card variance £${record.cardVariance.toFixed(2)}` : ""}`,
     });
 
     return NextResponse.json(record, { status: 201 });

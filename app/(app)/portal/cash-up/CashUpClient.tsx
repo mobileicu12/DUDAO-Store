@@ -18,12 +18,17 @@ import { useToast } from "@/components/ui/Toast";
 
 type Method = "cash" | "card" | "bank" | "account";
 type Breakdown = Record<Method, number> & { total: number };
+type Line = { name: string; method: string; amount: number };
 
 type Settlement = {
   businessDay: string;
   byMethod: Breakdown;
   expectedCash: number;
+  expectedCard: number;
+  cashExpenses: number;
   paymentCount: number;
+  accountLines: Line[];
+  counterByMethod: Breakdown;
 };
 
 type CashUp = {
@@ -33,8 +38,11 @@ type CashUp = {
   who: string;
   float: number;
   expectedCash: number;
+  cashExpenses: number;
   countedCash: number;
   variance: number;
+  countedCard: number;
+  cardVariance: number;
   note: string;
 };
 
@@ -53,12 +61,16 @@ const METHOD_LABEL: Record<Method, string> = {
   account: "On account",
 };
 
+const varianceTone = (v: number) =>
+  v === 0 ? "success" : Math.abs(v) < 1 ? "warning" : "danger";
+
 export default function CashUpClient() {
   const toast = useToast();
   const [settlement, setSettlement] = useState<Settlement | null>(null);
   const [history, setHistory] = useState<CashUp[]>([]);
   const [loading, setLoading] = useState(true);
   const [counted, setCounted] = useState("");
+  const [countedCard, setCountedCard] = useState("");
   const [float, setFloat] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -83,12 +95,17 @@ export default function CashUpClient() {
   }, [load]);
 
   const expectedCash = settlement?.expectedCash ?? 0;
+  const expectedCard = settlement?.expectedCard ?? 0;
+
   const variance = useMemo(() => {
     if (counted === "") return null;
-    const c = Number(counted) || 0;
-    const f = Number(float) || 0;
-    return Math.round((c - f - expectedCash) * 100) / 100;
+    return Math.round(((Number(counted) || 0) - (Number(float) || 0) - expectedCash) * 100) / 100;
   }, [counted, float, expectedCash]);
+
+  const cardVariance = useMemo(() => {
+    if (countedCard === "") return null;
+    return Math.round(((Number(countedCard) || 0) - expectedCard) * 100) / 100;
+  }, [countedCard, expectedCard]);
 
   async function save() {
     if (counted === "") {
@@ -102,6 +119,7 @@ export default function CashUpClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           countedCash: Number(counted),
+          countedCard: countedCard === "" ? 0 : Number(countedCard),
           float: Number(float) || 0,
           note,
         }),
@@ -114,6 +132,7 @@ export default function CashUpClient() {
           : `Cash-up recorded — ${d.variance < 0 ? "short" : "over"} by ${money(Math.abs(d.variance))}.`,
       );
       setCounted("");
+      setCountedCard("");
       setFloat("");
       setNote("");
       await load();
@@ -124,9 +143,6 @@ export default function CashUpClient() {
     }
   }
 
-  const varianceTone = (v: number) =>
-    v === 0 ? "success" : Math.abs(v) < 1 ? "warning" : "danger";
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -134,7 +150,7 @@ export default function CashUpClient() {
         subtitle="Count the drawer at close and reconcile it against today's takings."
       />
 
-      {/* Today's settlement */}
+      {/* Today's takings by method */}
       <div>
         <SectionLabel>Today&apos;s takings</SectionLabel>
         <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -151,20 +167,32 @@ export default function CashUpClient() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Cash-up form */}
+        {/* Count the drawer */}
         <Card>
           <div className="space-y-4 p-4 sm:p-5">
             <SectionLabel>Count the drawer</SectionLabel>
 
             {loading ? (
-              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-52 w-full" />
             ) : (
               <>
-                <div className="flex items-center justify-between rounded-lg border border-line bg-subtle px-3.5 py-2.5">
-                  <span className="text-sm text-muted">Expected cash (till)</span>
-                  <span className="tnum font-semibold text-ink">
-                    {money(expectedCash)}
-                  </span>
+                <div className="space-y-1.5 rounded-lg border border-line bg-subtle px-3.5 py-2.5 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted">Cash taken</span>
+                    <span className="tnum text-ink">{money(settlement?.byMethod.cash ?? 0)}</span>
+                  </div>
+                  {(settlement?.cashExpenses ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted">− Cash expenses</span>
+                      <span className="tnum text-danger">
+                        −{money(settlement?.cashExpenses ?? 0)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t border-line pt-1.5 font-semibold">
+                    <span className="text-ink">Expected cash (before float)</span>
+                    <span className="tnum text-ink">{money(expectedCash)}</span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -194,15 +222,45 @@ export default function CashUpClient() {
                 {variance !== null && (
                   <Alert tone={varianceTone(variance)}>
                     {variance === 0 ? (
-                      <span className="font-medium">Drawer balances exactly. 🎯</span>
+                      <span className="font-medium">Cash balances exactly. 🎯</span>
                     ) : (
                       <span>
-                        Drawer is{" "}
+                        Cash is{" "}
                         <strong>
                           {variance < 0 ? "short" : "over"} by {money(Math.abs(variance))}
                         </strong>{" "}
-                        (counted {money(Number(counted) || 0)} − float{" "}
-                        {money(Number(float) || 0)} − expected {money(expectedCash)}).
+                        (counted {money(Number(counted) || 0)} − float {money(Number(float) || 0)} −
+                        expected {money(expectedCash)}).
+                      </span>
+                    )}
+                  </Alert>
+                )}
+
+                <Field
+                  label="Counted card (optional)"
+                  hint={`Terminal expects ${money(expectedCard)}`}
+                >
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={countedCard}
+                    onChange={(e) => setCountedCard(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </Field>
+
+                {cardVariance !== null && countedCard !== "" && (
+                  <Alert tone={varianceTone(cardVariance)}>
+                    {cardVariance === 0 ? (
+                      <span className="font-medium">Card matches the terminal.</span>
+                    ) : (
+                      <span>
+                        Card is{" "}
+                        <strong>
+                          {cardVariance < 0 ? "short" : "over"} by {money(Math.abs(cardVariance))}
+                        </strong>
+                        .
                       </span>
                     )}
                   </Alert>
@@ -212,7 +270,7 @@ export default function CashUpClient() {
                   <Input
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
-                    placeholder="e.g. £5 float short, made up from petty cash"
+                    placeholder="e.g. £5 short, made up from petty cash"
                   />
                 </Field>
 
@@ -224,40 +282,87 @@ export default function CashUpClient() {
           </div>
         </Card>
 
-        {/* History */}
+        {/* Who paid today (system breakdown) */}
         <Card>
           <div className="p-4 sm:p-5">
-            <SectionLabel>Recent cash-ups</SectionLabel>
+            <SectionLabel>Who paid today</SectionLabel>
             {loading ? (
-              <Skeleton className="mt-3 h-40 w-full" />
-            ) : history.length === 0 ? (
-              <p className="mt-2 text-sm text-muted">No cash-ups recorded yet.</p>
+              <Skeleton className="mt-3 h-52 w-full" />
+            ) : (settlement?.accountLines.length ?? 0) === 0 &&
+              (settlement?.counterByMethod.total ?? 0) === 0 ? (
+              <p className="mt-2 text-sm text-muted">No payments taken today yet.</p>
             ) : (
-              <ul className="mt-3 divide-y divide-line">
-                {history.map((h) => (
-                  <li key={h.id} className="flex items-center justify-between gap-3 py-2.5">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-ink">
-                        {h.businessDay}{" "}
-                        <span className="font-normal text-muted">· {h.who || "—"}</span>
-                      </p>
-                      <p className="truncate text-xs text-muted">
-                        Counted {money(h.countedCash)} · expected {money(h.expectedCash)}
-                        {h.float ? ` + ${money(h.float)} float` : ""} · {dt(h.createdAt)}
-                      </p>
-                    </div>
-                    <Badge tone={varianceTone(h.variance)}>
-                      {h.variance === 0
-                        ? "Balanced"
-                        : `${h.variance < 0 ? "−" : "+"}${money(Math.abs(h.variance)).replace(/^[^0-9-]*/, "")}`}
-                    </Badge>
+              <ul className="mt-3 divide-y divide-line text-sm">
+                {settlement?.accountLines.map((l, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3 py-2">
+                    <span className="min-w-0 truncate text-ink-2">
+                      {l.name}{" "}
+                      <span className="text-muted">· {METHOD_LABEL[l.method as Method] ?? l.method}</span>
+                    </span>
+                    <span className="tnum font-medium text-ink">{money(l.amount)}</span>
                   </li>
                 ))}
+                {(settlement?.counterByMethod.total ?? 0) > 0 && (
+                  <li className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-ink-2">
+                      Counter / walk-in{" "}
+                      <span className="text-muted">
+                        · cash {money(settlement?.counterByMethod.cash ?? 0)}, card{" "}
+                        {money(settlement?.counterByMethod.card ?? 0)}
+                      </span>
+                    </span>
+                    <span className="tnum font-medium text-ink">
+                      {money(settlement?.counterByMethod.total ?? 0)}
+                    </span>
+                  </li>
+                )}
               </ul>
             )}
           </div>
         </Card>
       </div>
+
+      {/* History */}
+      <Card>
+        <div className="p-4 sm:p-5">
+          <SectionLabel>Recent cash-ups</SectionLabel>
+          {loading ? (
+            <Skeleton className="mt-3 h-24 w-full" />
+          ) : history.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">No cash-ups recorded yet.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-line">
+              {history.map((h) => (
+                <li key={h.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-ink">
+                      {h.businessDay}{" "}
+                      <span className="font-normal text-muted">· {h.who || "—"}</span>
+                    </p>
+                    <p className="truncate text-xs text-muted">
+                      Counted {money(h.countedCash)} · expected {money(h.expectedCash)}
+                      {h.float ? ` + ${money(h.float)} float` : ""} · {dt(h.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {h.countedCard > 0 && (
+                      <Badge tone={varianceTone(h.cardVariance)}>
+                        card {h.cardVariance < 0 ? "−" : h.cardVariance > 0 ? "+" : ""}
+                        {money(Math.abs(h.cardVariance)).replace(/^[^0-9-]*/, "")}
+                      </Badge>
+                    )}
+                    <Badge tone={varianceTone(h.variance)}>
+                      {h.variance === 0
+                        ? "Balanced"
+                        : `${h.variance < 0 ? "−" : "+"}${money(Math.abs(h.variance)).replace(/^[^0-9-]*/, "")}`}
+                    </Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
