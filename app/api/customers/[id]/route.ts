@@ -8,7 +8,7 @@ import {
   recordAccountPayment,
   updateCustomer,
 } from "@/lib/customers";
-import { revokePayment, type PaymentMethod } from "@/lib/billing";
+import { revokePayment, setPaymentMethod, type PaymentMethod } from "@/lib/billing";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -107,6 +107,17 @@ export async function POST(req: Request, { params }: Ctx) {
         await audit("customer.payment.revoke", {
           ref: id,
           detail: `Revoked account payment ${body.paymentId}`,
+        });
+        break;
+      }
+
+      case "set-payment-method": {
+        if (!body.paymentId) throw invalid("Which payment should be corrected?");
+        if (!body.method) throw invalid("A payment method is required.");
+        const change = await setPaymentMethod(body.paymentId, body.method);
+        await audit("customer.payment.method", {
+          ref: id,
+          detail: `£${change.amount.toFixed(2)} payment: ${change.before} → ${change.after}`,
         });
         break;
       }

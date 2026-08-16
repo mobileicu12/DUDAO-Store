@@ -6,6 +6,7 @@ import { nextInvoiceNumber } from "./settings";
 import type { SegmentKey } from "./segments";
 import {
   computeTotals as calcTotals,
+  PAYMENT_METHODS,
   type BillLineInput as LineInput,
   type InvoiceStatus as Status,
   type InvoiceTotals as Totals,
@@ -538,6 +539,32 @@ export async function revokePayment(paymentId: string): Promise<void> {
       });
     }
   }
+}
+
+/**
+ * Correct how a payment was taken, after the fact.
+ *
+ * Recording "cash" when it went on the card doesn't change what is owed, but it
+ * puts the money in the wrong column of the day's cash-up and the wrong expected
+ * total in the drawer. So the method is fixable in place — without deleting and
+ * re-entering the payment, which would move its date and lose the audit trail.
+ * Returns the old and new method for the caller to log.
+ */
+export async function setPaymentMethod(
+  paymentId: string,
+  method: Method,
+): Promise<{ before: string; after: Method; amount: number }> {
+  if (!PAYMENT_METHODS.some((m) => m.key === method)) {
+    throw invalid("That payment method is not recognised.");
+  }
+  const payment = await db.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) throw notFound("payment");
+  if (payment.revoked) throw invalid("This payment has been revoked.");
+  if (payment.method === method) {
+    return { before: payment.method, after: method, amount: num(payment.amount) };
+  }
+  await db.payment.update({ where: { id: paymentId }, data: { method } });
+  return { before: payment.method, after: method, amount: num(payment.amount) };
 }
 
 /* -------------------------------------------------------------------------- */

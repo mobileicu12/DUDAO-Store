@@ -540,9 +540,31 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
                       <p className="tnum font-medium text-ink">
                         {money(p.amount)}
                       </p>
-                      <p className="truncate text-xs text-muted">
-                        {methodLabel(p.method)} ·{" "}
-                        {new Date(p.takenAt).toLocaleDateString("en-GB")}
+                      <p className="flex items-center gap-1.5 truncate text-xs text-muted">
+                        <select
+                          value={p.method}
+                          disabled={saving}
+                          onChange={(e) =>
+                            act(
+                              {
+                                action: "set-payment-method",
+                                paymentId: p.id,
+                                method: e.target.value,
+                              },
+                              "Payment method corrected.",
+                            )
+                          }
+                          aria-label="Correct payment method"
+                          title="Correct how this payment was taken"
+                          className="rounded border border-line bg-surface px-1 py-0.5 text-xs text-ink-2"
+                        >
+                          {PAYMENT_METHODS.map((m) => (
+                            <option key={m.key} value={m.key}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                        · {new Date(p.takenAt).toLocaleDateString("en-GB")}
                         {p.note && ` · ${p.note}`}
                       </p>
                     </div>

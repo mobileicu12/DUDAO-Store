@@ -271,10 +271,38 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                     >
                       {money(p.amount)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm text-muted">
-                      {methodLabel(p.method)}
-                      {p.invoiceNumber && ` · ${p.invoiceNumber}`}
-                      {p.note && ` · ${p.note}`}
+                    <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted">
+                      {p.revoked ? (
+                        <span className="truncate">{methodLabel(p.method)}</span>
+                      ) : (
+                        <select
+                          value={p.method}
+                          disabled={busy}
+                          onChange={(e) =>
+                            act(
+                              {
+                                action: "set-payment-method",
+                                paymentId: p.id,
+                                method: e.target.value as PaymentMethod,
+                              },
+                              "Payment method corrected.",
+                            )
+                          }
+                          aria-label="Correct payment method"
+                          className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs text-ink-2"
+                          title="Correct how this payment was taken"
+                        >
+                          {PAYMENT_METHODS.map((m) => (
+                            <option key={m.key} value={m.key}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <span className="truncate">
+                        {p.invoiceNumber && ` · ${p.invoiceNumber}`}
+                        {p.note && ` · ${p.note}`}
+                      </span>
                     </span>
                     <span className="text-xs text-muted">
                       {new Date(p.takenAt).toLocaleDateString("en-GB")}

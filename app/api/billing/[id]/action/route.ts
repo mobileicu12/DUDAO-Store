@@ -6,6 +6,7 @@ import {
   getInvoice,
   recordPayment,
   revokePayment,
+  setPaymentMethod,
   voidInvoice,
   type PaymentMethod,
 } from "@/lib/billing";
@@ -89,6 +90,19 @@ export async function POST(req: Request, { params }: Ctx) {
           detail: gone
             ? `Removed £${gone.amount.toFixed(2)} ${gone.method}`
             : "Payment revoked",
+        });
+        return NextResponse.json(await getInvoice(id));
+      }
+
+      case "set-payment-method": {
+        if (!body.paymentId) throw invalid("Which payment should be corrected?");
+        if (!body.method) throw invalid("A payment method is required.");
+        const before = await getInvoice(id);
+        const change = await setPaymentMethod(body.paymentId, body.method);
+        await audit("invoice.payment.method", {
+          ref: id,
+          name: before?.number,
+          detail: `£${change.amount.toFixed(2)} payment: ${change.before} → ${change.after}`,
         });
         return NextResponse.json(await getInvoice(id));
       }
