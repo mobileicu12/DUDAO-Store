@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+import FinanceAccessPanel from "@/components/FinanceAccessPanel";
 
 export default function TeamClient() {
   const toast = useToast();
@@ -105,6 +106,10 @@ export default function TeamClient() {
         Owner accounts come from the PORTAL_OWNER_EMAIL environment variable and
         always have every permission. They cannot be edited or removed here.
       </Alert>
+
+      <div className="mt-4">
+        <FinanceAccessPanel />
+      </div>
 
       <div className="mt-4 space-y-3">
         {loading ? (

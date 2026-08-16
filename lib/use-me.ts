@@ -6,6 +6,10 @@ import type { Me } from "./permissions";
 export type MeState = {
   me: Me | null;
   canSeeFinance: boolean;
+  /** ISO expiry of a temporary finance-reveal window, if any. */
+  financeExpiresAt: string | null;
+  /** True while a finance-access request is awaiting owner approval. */
+  financePending: boolean;
   viaMaster: boolean;
   dbConfigured: boolean;
   loading: boolean;
@@ -23,6 +27,8 @@ const listeners = new Set<(s: Omit<MeState, "loading">) => void>();
 const EMPTY: Omit<MeState, "loading"> = {
   me: null,
   canSeeFinance: false,
+  financeExpiresAt: null,
+  financePending: false,
   viaMaster: false,
   dbConfigured: true,
 };
@@ -38,12 +44,16 @@ async function load(): Promise<Omit<MeState, "loading">> {
       const json = (await res.json()) as {
         user: Me | null;
         canSeeFinance?: boolean;
+        financeExpiresAt?: string | null;
+        financePending?: boolean;
         viaMaster?: boolean;
         dbConfigured?: boolean;
       };
       const next = {
         me: json.user,
         canSeeFinance: Boolean(json.canSeeFinance),
+        financeExpiresAt: json.financeExpiresAt ?? null,
+        financePending: Boolean(json.financePending),
         viaMaster: Boolean(json.viaMaster),
         dbConfigured: json.dbConfigured !== false,
       };

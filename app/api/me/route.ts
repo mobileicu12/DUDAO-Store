@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentCaller } from "@/lib/guard";
 import { dbConfigured } from "@/lib/db";
+import { financeStatusFor } from "@/lib/finance-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,14 @@ export async function GET() {
     });
   }
 
+  const standing =
+    caller.role === "owner" || caller.permissions.includes("reports");
+  // Members without standing access may hold a temporary owner-approved window.
+  let fin = { visible: false, expiresAt: null as string | null, pending: false };
+  if (!standing && !caller.viaMaster) {
+    fin = await financeStatusFor(caller.email).catch(() => fin);
+  }
+
   return NextResponse.json({
     user: {
       email: caller.email,
@@ -30,8 +39,9 @@ export async function GET() {
       role: caller.role,
       permissions: caller.permissions,
     },
-    canSeeFinance:
-      caller.role === "owner" || caller.permissions.includes("reports"),
+    canSeeFinance: standing || fin.visible,
+    financeExpiresAt: fin.expiresAt,
+    financePending: fin.pending,
     viaMaster: caller.viaMaster,
     dbConfigured: dbConfigured(),
   });

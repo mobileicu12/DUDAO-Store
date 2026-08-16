@@ -114,7 +114,16 @@ export async function requireOwner(): Promise<NextResponse | null> {
 export async function canSeeFinanceRequest(): Promise<boolean> {
   const caller = await currentCaller();
   if (!caller) return false;
-  return caller.role === "owner" || caller.permissions.includes("reports");
+  if (caller.role === "owner" || caller.permissions.includes("reports")) {
+    return true;
+  }
+  // Otherwise a live, owner-approved reveal window lets them see it briefly.
+  try {
+    const { financeStatusFor } = await import("./finance-access");
+    return (await financeStatusFor(caller.email)).visible;
+  } catch {
+    return false;
+  }
 }
 
 /**

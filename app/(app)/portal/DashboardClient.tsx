@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BUSINESS, money } from "@/lib/business";
 import { useMe } from "@/lib/use-me";
+import FinanceRequestButton from "@/components/FinanceRequestButton";
 import type { CatalogStats } from "@/app/api/stats/route";
 import {
   Alert,
@@ -106,7 +107,11 @@ export default function DashboardClient() {
 
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle={`${BUSINESS.name} — control portal`} />
+      <PageHeader
+        title="Dashboard"
+        subtitle={`${BUSINESS.name} — control portal`}
+        actions={<FinanceRequestButton />}
+      />
 
       {!dbConfigured && (
         <div className="mb-5">

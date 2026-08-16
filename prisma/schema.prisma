@@ -44,6 +44,19 @@ model AuditLog {
   @@index([action])
 }
 
+/// Temporary, owner-approved access to sensitive finance figures. Staff who
+/// don't hold the standing "reports" permission can request a look; the owner
+/// approves for a short window, after which it auto-hides. One row per person.
+model FinanceAccess {
+  email       String    @id
+  name        String    @default("")
+  /// Active grant window — visible while now < expiresAt.
+  expiresAt   DateTime?
+  /// Pending request timestamp, cleared on approve/revoke.
+  requestedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+}
+
 /// A shop expense — rent, stock purchases, utilities, wages, transport, etc.
 /// Recorded for the books and pre-filled into the cash-up closing sheet.
 model Expense {
