@@ -27,6 +27,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "customer.payment.revoke": "Payment revoked",
   "customer.delete": "Customer deleted",
   "cashup.record": "Cash-up recorded",
+  "buying.add": "Buying cost added",
+  "buying.delete": "Buying cost removed",
 };
 
 // Actions that change money and should stand out in the log.
