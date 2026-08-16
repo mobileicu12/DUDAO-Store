@@ -14,6 +14,7 @@ export type PermKey =
   | "customers"
   | "collections"
   | "reports"
+  | "expenses"
   | "settings"
   | "users"
   | "logs";
@@ -70,6 +71,11 @@ export const PERMISSIONS: PermDef[] = [
     key: "users",
     label: "Team",
     description: "Invite staff, set passwords and decide who can do what.",
+  },
+  {
+    key: "expenses",
+    label: "Expenses",
+    description: "Record and view shop expenses (rent, stock, utilities, wages).",
   },
   {
     key: "logs",

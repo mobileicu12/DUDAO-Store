@@ -20,6 +20,8 @@ export type NavItem = {
   group: NavGroup;
   /** null = visible to anyone signed in. */
   perm: PermKey | null;
+  /** Owner-only tools (e.g. Settlement), regardless of `perm`. */
+  ownerOnly?: boolean;
   /** Shown in the mobile bottom bar rather than behind "More". */
   primary?: boolean;
   /** Short label for the cramped mobile bar. */
@@ -77,6 +79,21 @@ export const NAV: NavItem[] = [
     icon: "M3.5 7.5h17v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1zM3.5 7.5 6 3.5h12l2.5 4M12 11.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
     group: "Sell",
     perm: "billing",
+  },
+  {
+    href: "/portal/expenses",
+    label: "Expenses",
+    icon: "M17 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2m3-4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zm7 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
+    group: "Sell",
+    perm: "expenses",
+  },
+  {
+    href: "/portal/settlements",
+    label: "Settlement",
+    icon: "M9 7h6m0 0v6m0-6L5 17M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
+    group: "Admin",
+    perm: null,
+    ownerOnly: true,
   },
 
   {
@@ -142,7 +159,10 @@ export const NAV: NavItem[] = [
 
 export function visibleNav(items: NavItem[], me: Me | null): NavItem[] {
   if (!me) return [];
-  return items.filter((item) => item.perm === null || hasPerm(me, item.perm));
+  return items.filter((item) => {
+    if (item.ownerOnly) return me.role === "owner";
+    return item.perm === null || hasPerm(me, item.perm);
+  });
 }
 
 export function groupedNav(

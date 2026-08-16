@@ -44,6 +44,41 @@ model AuditLog {
   @@index([action])
 }
 
+/// A shop expense — rent, stock purchases, utilities, wages, transport, etc.
+/// Recorded for the books and pre-filled into the cash-up closing sheet.
+model Expense {
+  id          String   @id @default(cuid())
+  /// The day the expense was incurred.
+  date        DateTime @default(now())
+  category    String
+  description String   @default("")
+  amount      Decimal  @db.Decimal(12, 2)
+  /// cash | card | bank transfer | other — cash ones come out of the drawer.
+  method      String   @default("cash")
+  note        String   @default("")
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Buying / cost settlement — OWNER ONLY, separate from Expenses. Money spent
+/// purchasing stock to resell; each entry can be flipped in or out of the
+/// net-earnings calculation.
+model Buying {
+  id          String   @id @default(cuid())
+  date        DateTime @default(now())
+  supplier    String   @default("")
+  description String   @default("")
+  amount      Decimal  @db.Decimal(12, 2)
+  /// Does it reduce net earnings right now?
+  included    Boolean  @default(true)
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
 /// End-of-day cash-up. Staff count the drawer at close and record it against
 /// what the till says should be there: variance = counted − float − expected
 /// cash takings. Kept as history so a recurring discrepancy is visible.
