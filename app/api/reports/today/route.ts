@@ -74,14 +74,17 @@ export async function GET() {
     const invoiced = money2(todayInvoices.reduce((s, i) => s + totalOf(i), 0));
     const allTimeSales = money2(allInvoices.reduce((s, i) => s + totalOf(i), 0));
 
-    // By channel: wholesale is the online/trade segment, everything else
-    // (shop, POS, marketplace, unset) is retail.
-    const wholesale = money2(
-      todayInvoices
-        .filter((i) => i.segment === "online")
-        .reduce((s, i) => s + totalOf(i), 0),
-    );
-    const retail = money2(invoiced - wholesale);
+    // By channel, exactly as MOBILE ICU splits it: online/trade is wholesale,
+    // eBay/Amazon are marketplace, and shop / POS / unset is retail.
+    const sumSeg = (pred: (seg: string) => boolean) =>
+      money2(
+        todayInvoices
+          .filter((i) => pred(i.segment))
+          .reduce((s, i) => s + totalOf(i), 0),
+      );
+    const wholesale = sumSeg((seg) => seg === "online");
+    const marketplace = sumSeg((seg) => seg === "ebay" || seg === "amazon");
+    const retail = money2(invoiced - wholesale - marketplace);
 
     // By method — bucket into the four the till offers.
     const methodSum = (m: string) =>
@@ -115,6 +118,7 @@ export async function GET() {
       invoiceCount: todayInvoices.length,
       retail,
       wholesale,
+      marketplace,
       cash,
       card,
       bank,
