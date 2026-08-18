@@ -49,6 +49,14 @@ export const NAV: NavItem[] = [
     primary: true,
   },
   {
+    href: "/portal/cash-up",
+    label: "Cash-up",
+    short: "Cash",
+    icon: "M3.5 7.5h17v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1zM3.5 7.5 6 3.5h12l2.5 4M12 11.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+    group: "Sell",
+    perm: "billing",
+  },
+  {
     href: "/portal/invoices",
     label: "Invoices",
     short: "Bills",
@@ -74,13 +82,6 @@ export const NAV: NavItem[] = [
     perm: "orders",
   },
   {
-    href: "/portal/cash-up",
-    label: "Cash up",
-    icon: "M3.5 7.5h17v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1zM3.5 7.5 6 3.5h12l2.5 4M12 11.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
-    group: "Sell",
-    perm: "billing",
-  },
-  {
     href: "/portal/expenses",
     label: "Expenses",
     icon: "M17 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2m3-4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zm7 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
@@ -101,6 +102,14 @@ export const NAV: NavItem[] = [
     label: "Inventory",
     short: "Stock",
     icon: "M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5zM3.5 7.5 12 12m0 0 8.5-4.5M12 12v9",
+    group: "Catalog",
+    perm: "inventory",
+  },
+  {
+    href: "/portal/till",
+    label: "Till items",
+    short: "Till",
+    icon: "M3.5 7.5h17l-1.2 11a1.5 1.5 0 0 1-1.5 1.35H6.2a1.5 1.5 0 0 1-1.5-1.35zM8 11h8M8 14.5h5",
     group: "Catalog",
     perm: "inventory",
   },
@@ -141,19 +150,19 @@ export const NAV: NavItem[] = [
     perm: "settings",
   },
   {
-    href: "/portal/users",
-    label: "Team",
-    icon: "M9 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM21 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM1.5 19a4.5 4.5 0 0 1 9 0M13.5 19a4.5 4.5 0 0 1 9 0",
-    group: "Admin",
-    perm: "users",
-  },
-  {
     href: "/portal/logs",
     label: "Activity log",
     short: "Log",
     icon: "M8 6.5h9M8 12h9M8 17.5h9M4 6.5h.01M4 12h.01M4 17.5h.01",
     group: "Admin",
     perm: "logs",
+  },
+  {
+    href: "/portal/users",
+    label: "Team",
+    icon: "M9 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM21 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM1.5 19a4.5 4.5 0 0 1 9 0M13.5 19a4.5 4.5 0 0 1 9 0",
+    group: "Admin",
+    perm: "users",
   },
 ];
 
