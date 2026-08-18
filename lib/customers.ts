@@ -421,13 +421,32 @@ export async function bulkCustomerSegments(
  * "he dropped £200 off the balance" case. It reduces what they owe overall
  * without being tied to a bill.
  */
+export type AccountPaymentResult = {
+  /** Bills cleared in full by this payment. */
+  settled: { number: string; amount: number }[];
+  /** The oldest bill left part-paid, if the money ran out mid-bill. */
+  partial: { number: string; amount: number } | null;
+  /** Surplus left sitting on the account with no open bill to clear. */
+  creditedToAccount: number;
+};
+
+/**
+ * Record a payment on a customer's account, applied to their OPEN invoices
+ * oldest-first — exactly as MOBILE ICU does:
+ *
+ *   1) walk open bills from oldest to newest, clearing each in turn;
+ *   2) the first bill too big to clear outright is PART-paid and the walk stops;
+ *   3) any surplus is held on the account as credit for future bills.
+ *
+ * Strict FIFO means the oldest debt is always what gets reduced first.
+ */
 export async function recordAccountPayment(args: {
   customerId: string;
   amount: number;
   method: PaymentMethod;
   note?: string;
   staffEmail: string;
-}): Promise<void> {
+}): Promise<AccountPaymentResult> {
   if (!Number.isFinite(args.amount) || args.amount <= 0) {
     throw invalid("Enter a payment amount greater than zero.");
   }
@@ -437,15 +456,75 @@ export async function recordAccountPayment(args: {
   });
   if (!customer) throw notFound("customer");
 
-  await db.payment.create({
-    data: {
-      customerId: args.customerId,
-      amount: money2(args.amount),
-      method: args.method,
-      note: args.note ?? "",
-      staffEmail: args.staffEmail,
+  // Open bills oldest-first, with what's needed to compute each live balance.
+  const invoices = await db.invoice.findMany({
+    where: { customerId: args.customerId, status: { notIn: ["VOID", "PAID"] } },
+    include: {
+      lines: true,
+      payments: { where: { revoked: false }, select: { amount: true } },
     },
+    orderBy: { issuedAt: "asc" },
   });
+
+  const settled: { number: string; amount: number }[] = [];
+  let partial: { number: string; amount: number } | null = null;
+  let remaining = money2(args.amount);
+
+  await db.$transaction(async (tx) => {
+    for (const inv of invoices) {
+      if (remaining <= 0.001) break;
+      const total = computeTotals({
+        lines: inv.lines.map((l) => ({
+          quantity: l.quantity,
+          unitPrice: num(l.unitPrice),
+        })),
+        discount: num(inv.discount),
+        taxable: inv.taxable,
+        taxRate: num(inv.taxRate),
+        paid: 0,
+      }).total;
+      const paidAlready = inv.payments.reduce((s, p) => s + num(p.amount), 0);
+      const balance = money2(total - paidAlready);
+      if (balance <= 0.001) continue;
+
+      const applied = money2(Math.min(remaining, balance));
+      await tx.payment.create({
+        data: {
+          customerId: args.customerId,
+          invoiceId: inv.id,
+          amount: applied,
+          method: args.method,
+          note: args.note ?? "",
+          staffEmail: args.staffEmail,
+        },
+      });
+      if (applied >= balance - 0.001) {
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: { status: "PAID", paidAt: new Date() },
+        });
+        settled.push({ number: inv.number, amount: applied });
+      } else {
+        partial = { number: inv.number, amount: applied };
+      }
+      remaining = money2(remaining - applied);
+    }
+
+    // Whatever is left has no bill to clear — hold it on the account as credit.
+    if (remaining > 0.001) {
+      await tx.payment.create({
+        data: {
+          customerId: args.customerId,
+          amount: remaining,
+          method: args.method,
+          note: args.note || "Payment on account (credit)",
+          staffEmail: args.staffEmail,
+        },
+      });
+    }
+  });
+
+  return { settled, partial, creditedToAccount: money2(Math.max(0, remaining)) };
 }
 
 /**

@@ -85,17 +85,25 @@ export async function POST(req: Request, { params }: Ctx) {
     switch (body.action) {
       case "payment": {
         const amount = Number(body.amount) || 0;
-        await recordAccountPayment({
+        const result = await recordAccountPayment({
           customerId: id,
           amount,
           method: body.method ?? "cash",
           note: body.note,
           staffEmail: caller.email,
         });
+        const parts: string[] = [];
+        if (result.settled.length) {
+          parts.push(`settled ${result.settled.map((s) => s.number).join(", ")}`);
+        }
+        if (result.partial) parts.push(`part-paid ${result.partial.number}`);
+        if (result.creditedToAccount > 0.001) {
+          parts.push(`£${result.creditedToAccount.toFixed(2)} on account`);
+        }
         await audit("customer.payment.add", {
           ref: id,
-          detail: `£${amount.toFixed(2)} ${body.method ?? "cash"} held on account${
-            body.note ? ` — ${body.note}` : ""
+          detail: `£${amount.toFixed(2)} ${body.method ?? "cash"}${
+            parts.length ? ` — ${parts.join(", ")}` : ""
           }`,
         });
         break;
