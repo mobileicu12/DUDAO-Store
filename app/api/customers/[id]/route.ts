@@ -5,6 +5,7 @@ import {
   deleteCustomer,
   generateTradeCode,
   getCustomer,
+  reapplyAccountCredits,
   recordAccountPayment,
   updateCustomer,
 } from "@/lib/customers";
@@ -126,6 +127,23 @@ export async function POST(req: Request, { params }: Ctx) {
         await audit("customer.payment.method", {
           ref: id,
           detail: `£${change.amount.toFixed(2)} payment: ${change.before} → ${change.after}`,
+        });
+        break;
+      }
+
+      case "reapply-credit": {
+        const result = await reapplyAccountCredits(id, caller.email);
+        const parts: string[] = [];
+        if (result.settled.length) {
+          parts.push(`settled ${result.settled.map((s) => s.number).join(", ")}`);
+        }
+        if (result.partial) parts.push(`part-paid ${result.partial.number}`);
+        if (result.creditedToAccount > 0.001) {
+          parts.push(`£${result.creditedToAccount.toFixed(2)} left on account`);
+        }
+        await audit("customer.credit.reapply", {
+          ref: id,
+          detail: parts.length ? parts.join(", ") : "No open bills to apply credit to",
         });
         break;
       }

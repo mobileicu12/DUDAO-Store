@@ -27,6 +27,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "customer.payment.add": "Payment received",
   "customer.payment.revoke": "Payment revoked",
   "customer.payment.method": "Payment method corrected",
+  "customer.credit.reapply": "Account credit re-applied",
   "customer.delete": "Customer deleted",
   "cashup.record": "Cash-up recorded",
   "buying.add": "Buying cost added",

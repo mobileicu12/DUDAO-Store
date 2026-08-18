@@ -440,6 +440,77 @@ export type AccountPaymentResult = {
  *
  * Strict FIFO means the oldest debt is always what gets reduced first.
  */
+/**
+ * Apply `amount` to a customer's open bills oldest-first, inside an existing
+ * transaction. Clears each bill in turn, part-pays the first one too big to
+ * clear, and returns what happened plus any un-applied remainder. Does NOT
+ * record the remainder — the caller decides what to do with it.
+ */
+async function allocateToOpenBills(
+  tx: Prisma.TransactionClient,
+  customerId: string,
+  amount: number,
+  meta: { method: PaymentMethod; note: string; staffEmail: string },
+): Promise<{
+  settled: { number: string; amount: number }[];
+  partial: { number: string; amount: number } | null;
+  remaining: number;
+}> {
+  const invoices = await tx.invoice.findMany({
+    where: { customerId, status: { notIn: ["VOID", "PAID"] } },
+    include: {
+      lines: true,
+      payments: { where: { revoked: false }, select: { amount: true } },
+    },
+    orderBy: { issuedAt: "asc" },
+  });
+
+  const settled: { number: string; amount: number }[] = [];
+  let partial: { number: string; amount: number } | null = null;
+  let remaining = money2(amount);
+
+  for (const inv of invoices) {
+    if (remaining <= 0.001) break;
+    const total = computeTotals({
+      lines: inv.lines.map((l) => ({
+        quantity: l.quantity,
+        unitPrice: num(l.unitPrice),
+      })),
+      discount: num(inv.discount),
+      taxable: inv.taxable,
+      taxRate: num(inv.taxRate),
+      paid: 0,
+    }).total;
+    const paidAlready = inv.payments.reduce((s, p) => s + num(p.amount), 0);
+    const balance = money2(total - paidAlready);
+    if (balance <= 0.001) continue;
+
+    const applied = money2(Math.min(remaining, balance));
+    await tx.payment.create({
+      data: {
+        customerId,
+        invoiceId: inv.id,
+        amount: applied,
+        method: meta.method,
+        note: meta.note,
+        staffEmail: meta.staffEmail,
+      },
+    });
+    if (applied >= balance - 0.001) {
+      await tx.invoice.update({
+        where: { id: inv.id },
+        data: { status: "PAID", paidAt: new Date() },
+      });
+      settled.push({ number: inv.number, amount: applied });
+    } else {
+      partial = { number: inv.number, amount: applied };
+    }
+    remaining = money2(remaining - applied);
+  }
+
+  return { settled, partial, remaining: money2(Math.max(0, remaining)) };
+}
+
 export async function recordAccountPayment(args: {
   customerId: string;
   amount: number;
@@ -456,75 +527,78 @@ export async function recordAccountPayment(args: {
   });
   if (!customer) throw notFound("customer");
 
-  // Open bills oldest-first, with what's needed to compute each live balance.
-  const invoices = await db.invoice.findMany({
-    where: { customerId: args.customerId, status: { notIn: ["VOID", "PAID"] } },
-    include: {
-      lines: true,
-      payments: { where: { revoked: false }, select: { amount: true } },
-    },
-    orderBy: { issuedAt: "asc" },
-  });
-
-  const settled: { number: string; amount: number }[] = [];
-  let partial: { number: string; amount: number } | null = null;
-  let remaining = money2(args.amount);
-
-  await db.$transaction(async (tx) => {
-    for (const inv of invoices) {
-      if (remaining <= 0.001) break;
-      const total = computeTotals({
-        lines: inv.lines.map((l) => ({
-          quantity: l.quantity,
-          unitPrice: num(l.unitPrice),
-        })),
-        discount: num(inv.discount),
-        taxable: inv.taxable,
-        taxRate: num(inv.taxRate),
-        paid: 0,
-      }).total;
-      const paidAlready = inv.payments.reduce((s, p) => s + num(p.amount), 0);
-      const balance = money2(total - paidAlready);
-      if (balance <= 0.001) continue;
-
-      const applied = money2(Math.min(remaining, balance));
-      await tx.payment.create({
-        data: {
-          customerId: args.customerId,
-          invoiceId: inv.id,
-          amount: applied,
-          method: args.method,
-          note: args.note ?? "",
-          staffEmail: args.staffEmail,
-        },
-      });
-      if (applied >= balance - 0.001) {
-        await tx.invoice.update({
-          where: { id: inv.id },
-          data: { status: "PAID", paidAt: new Date() },
-        });
-        settled.push({ number: inv.number, amount: applied });
-      } else {
-        partial = { number: inv.number, amount: applied };
-      }
-      remaining = money2(remaining - applied);
-    }
-
+  const result = await db.$transaction(async (tx) => {
+    const r = await allocateToOpenBills(tx, args.customerId, args.amount, {
+      method: args.method,
+      note: args.note ?? "",
+      staffEmail: args.staffEmail,
+    });
     // Whatever is left has no bill to clear — hold it on the account as credit.
-    if (remaining > 0.001) {
+    if (r.remaining > 0.001) {
       await tx.payment.create({
         data: {
           customerId: args.customerId,
-          amount: remaining,
+          amount: r.remaining,
           method: args.method,
           note: args.note || "Payment on account (credit)",
           staffEmail: args.staffEmail,
         },
       });
     }
+    return r;
   });
 
-  return { settled, partial, creditedToAccount: money2(Math.max(0, remaining)) };
+  return {
+    settled: result.settled,
+    partial: result.partial,
+    creditedToAccount: result.remaining,
+  };
+}
+
+/**
+ * Push a customer's sitting account credit onto their open bills — the manual
+ * "re-apply credit" action MOBILE ICU exposes. The un-applied credit payments
+ * are revoked and re-created against the bills they now clear (net paid is
+ * unchanged), with any leftover held back on the account.
+ */
+export async function reapplyAccountCredits(
+  customerId: string,
+  staffEmail: string,
+): Promise<AccountPaymentResult> {
+  return db.$transaction(async (tx) => {
+    const credits = await tx.payment.findMany({
+      where: { customerId, invoiceId: null, revoked: false },
+    });
+    const total = money2(credits.reduce((s, p) => s + num(p.amount), 0));
+    if (total <= 0.001) {
+      return { settled: [], partial: null, creditedToAccount: 0 };
+    }
+    const method = (credits[0]?.method as PaymentMethod) ?? "cash";
+
+    // The credit is being reallocated — retire the old unallocated entries.
+    await tx.payment.updateMany({
+      where: { id: { in: credits.map((c) => c.id) } },
+      data: { revoked: true, revokedAt: new Date() },
+    });
+
+    const r = await allocateToOpenBills(tx, customerId, total, {
+      method,
+      note: "Re-applied account credit",
+      staffEmail,
+    });
+    if (r.remaining > 0.001) {
+      await tx.payment.create({
+        data: {
+          customerId,
+          amount: r.remaining,
+          method,
+          note: "Payment on account (credit)",
+          staffEmail,
+        },
+      });
+    }
+    return { settled: r.settled, partial: r.partial, creditedToAccount: r.remaining };
+  });
 }
 
 /**

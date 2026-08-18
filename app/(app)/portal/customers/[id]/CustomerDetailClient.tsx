@@ -233,6 +233,28 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                   Revoked entries stay listed so corrections are visible.
                 </p>
               </div>
+              {(() => {
+                const credit = customer.ledger
+                  .filter((p) => !p.revoked && !p.invoiceNumber)
+                  .reduce((s, p) => s + p.amount, 0);
+                const openBills = customer.invoices.some(
+                  (i) => i.status !== "VOID" && i.balance > 0.001,
+                );
+                return credit > 0.001 && openBills ? (
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      act(
+                        { action: "reapply-credit" },
+                        "Account credit re-applied to open bills.",
+                      )
+                    }
+                  >
+                    Re-apply {money(credit)} credit
+                  </Button>
+                ) : null;
+              })()}
               <Select
                 value={methodFilter}
                 onChange={(e) => setMethodFilter(e.target.value)}
