@@ -305,6 +305,7 @@ export default function TillClient({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "payment",
             amount: surplus,
             method: payMethod,
             note: `Overpayment on ${body.number}`,
