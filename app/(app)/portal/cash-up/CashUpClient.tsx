@@ -143,11 +143,62 @@ export default function CashUpClient() {
     }
   }
 
+  function exportCsv() {
+    const header = [
+      "Day",
+      "Recorded",
+      "By",
+      "Float",
+      "Expected cash",
+      "Cash expenses",
+      "Counted cash",
+      "Cash variance",
+      "Counted card",
+      "Card variance",
+      "Note",
+    ];
+    const lines = history.map((h) =>
+      [
+        h.businessDay,
+        new Date(h.createdAt).toLocaleString("en-GB"),
+        h.who,
+        h.float.toFixed(2),
+        h.expectedCash.toFixed(2),
+        h.cashExpenses.toFixed(2),
+        h.countedCash.toFixed(2),
+        h.variance.toFixed(2),
+        h.countedCard.toFixed(2),
+        h.cardVariance.toFixed(2),
+        h.note,
+      ]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(","),
+    );
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], {
+      type: "text/csv",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cash-ups-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Cash up"
         subtitle="Count the drawer at close and reconcile it against today's takings."
+        actions={
+          <Button
+            variant="secondary"
+            disabled={history.length === 0}
+            onClick={exportCsv}
+          >
+            Export CSV
+          </Button>
+        }
       />
 
       {/* Today's takings by method */}
