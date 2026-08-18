@@ -429,6 +429,16 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                   Period statement PDF
                 </Button>
               </div>
+
+              <a
+                href={`/api/customers/${customer.id}/export`}
+                className="block"
+                download
+              >
+                <Button full variant="secondary">
+                  Export full record (Excel)
+                </Button>
+              </a>
             </div>
           </Card>
 
