@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { money } from "@/lib/business";
+import { downloadFile } from "@/lib/download";
 import {
   methodLabel,
   PAYMENT_METHODS,
@@ -13,70 +14,70 @@ import {
 } from "@/lib/billing-shared";
 import { SEGMENTS, type SegmentKey } from "@/lib/segments";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
-import { PhoneField } from "@/components/ui/PhoneField";
 import type { CustomerDetail } from "@/lib/customers";
 import {
   Alert,
   Badge,
   Button,
   Card,
-  CardHeader,
   cx,
-  Field,
   Input,
-  PageHeader,
   Select,
   Skeleton,
-  StatCard,
   Textarea,
 } from "@/components/ui/primitives";
-import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+
+const gbp = (n: number) => money(n);
+const ymd = (d: Date) => d.toISOString().slice(0, 10);
+
+// Statement periods — same presets as the reference.
+const PERIODS: { key: string; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "7d", label: "Last 7 days" },
+  { key: "1m", label: "Last month" },
+  { key: "3m", label: "Last 3 months" },
+  { key: "6m", label: "Last 6 months" },
+  { key: "1y", label: "Last year" },
+  { key: "all", label: "All time" },
+  { key: "custom", label: "Custom range" },
+];
+
+function periodRange(key: string, from: string, to: string): { from: string; to: string; label: string } {
+  const now = new Date();
+  const end = new Date();
+  let start = new Date();
+  switch (key) {
+    case "today": start = new Date(); break;
+    case "7d": start.setDate(now.getDate() - 7); break;
+    case "1m": start.setMonth(now.getMonth() - 1); break;
+    case "3m": start.setMonth(now.getMonth() - 3); break;
+    case "6m": start.setMonth(now.getMonth() - 6); break;
+    case "1y": start.setFullYear(now.getFullYear() - 1); break;
+    case "all": return { from: "", to: "", label: "All time" };
+    case "custom": return { from, to, label: from && to ? `${from} → ${to}` : "Custom range" };
+  }
+  const f = ymd(start);
+  const t = ymd(end);
+  return { from: f, to: t, label: `${f} → ${t}` };
+}
 
 export default function CustomerDetailClient({ id }: { id: string }) {
   const toast = useToast();
+  const router = useRouter();
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [payOpen, setPayOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [methodFilter, setMethodFilter] = useState("all");
-  const [stmtSrc, setStmtSrc] = useState<string | null>(null);
-  const [stFrom, setStFrom] = useState("");
-  const [stTo, setStTo] = useState(new Date().toISOString().slice(0, 10));
   const [sending, setSending] = useState("");
+  const [editing, setEditing] = useState(false);
 
-  // Email/WhatsApp a document to the customer. `kind` picks the endpoint;
-  // period is passed through for statements when a range is set.
-  const sendDoc = async (
-    kind: "statement" | "today",
-    channel: "email" | "whatsapp",
-  ) => {
-    const tag = `${kind}-${channel}`;
-    setSending(tag);
-    try {
-      const body: Record<string, unknown> = { channel };
-      if (kind === "statement" && stFrom && stTo) {
-        body.from = stFrom;
-        body.to = stTo;
-      }
-      const res = await fetch(`/api/customers/${id}/${kind}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "That did not send.");
-      toast.success(
-        `${kind === "today" ? "Today's summary" : "Statement"} sent by ${channel === "email" ? "email" : "WhatsApp"}.`,
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSending("");
-    }
-  };
+  const [invFilter, setInvFilter] = useState<"all" | "unpaid" | "paid">("all");
+  const [invSort, setInvSort] = useState<"new" | "old" | "high">("new");
+  const [invQ, setInvQ] = useState("");
+  const [methodFilter, setMethodFilter] = useState("all");
+
+  const [preview, setPreview] = useState<{ src: string; title: string; subtitle?: string; filename: string } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/customers/${id}`, { cache: "no-store" });
@@ -97,6 +98,7 @@ export default function CustomerDetailClient({ id }: { id: string }) {
     };
   }, [load, toast]);
 
+  // Ledger action (payment / revoke / method / reapply / trade-code).
   const act = async (body: Record<string, unknown>, message: string) => {
     setBusy(true);
     try {
@@ -118,9 +120,65 @@ export default function CustomerDetailClient({ id }: { id: string }) {
       toast.error((e as Error).message);
     } finally {
       setBusy(false);
-      setPayOpen(false);
     }
   };
+
+  // Email + WhatsApp a document in one action, as the reference does.
+  const sendDoc = async (kind: "statement" | "today", opts: { from?: string; to?: string } = {}) => {
+    if (!customer) return;
+    if (!customer.email && !customer.phone) {
+      toast.error("No email or phone on file to send to.");
+      return;
+    }
+    setSending(kind);
+    const done: string[] = [];
+    try {
+      for (const channel of ["email", "whatsapp"] as const) {
+        if (channel === "email" && !customer.email) continue;
+        if (channel === "whatsapp" && !customer.phone) continue;
+        const res = await fetch(`/api/customers/${id}/${kind}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel, ...opts }),
+        });
+        if (res.ok) done.push(channel === "email" ? "email" : "WhatsApp");
+      }
+      toast.success(
+        done.length
+          ? `${kind === "today" ? "Today's summary" : "Statement"} sent by ${done.join(" + ")}.`
+          : "Nothing sent — email/WhatsApp may not be set up.",
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSending("");
+    }
+  };
+
+  const invoices = useMemo(() => {
+    if (!customer) return [];
+    return customer.invoices
+      .filter((i) => {
+        if (invFilter === "paid" && i.balance > 0.001) return false;
+        if (invFilter === "unpaid" && i.balance <= 0.001) return false;
+        if (invQ.trim()) return i.number.toLowerCase().includes(invQ.trim().toLowerCase());
+        return true;
+      })
+      .sort((a, b) =>
+        invSort === "high"
+          ? b.total - a.total
+          : invSort === "old"
+            ? +new Date(a.issuedAt) - +new Date(b.issuedAt)
+            : +new Date(b.issuedAt) - +new Date(a.issuedAt),
+      );
+  }, [customer, invFilter, invSort, invQ]);
+
+  const ledger = useMemo(() => {
+    if (!customer) return [];
+    return methodFilter === "all"
+      ? customer.ledger
+      : customer.ledger.filter((p) => p.method === methodFilter);
+  }, [customer, methodFilter]);
 
   if (loading) {
     return (
@@ -130,7 +188,6 @@ export default function CustomerDetailClient({ id }: { id: string }) {
       </div>
     );
   }
-
   if (!customer) {
     return (
       <Alert tone="danger" title="Customer not found">
@@ -141,591 +198,623 @@ export default function CustomerDetailClient({ id }: { id: string }) {
     );
   }
 
-  const ledger =
-    methodFilter === "all"
-      ? customer.ledger
-      : customer.ledger.filter((p) => p.method === methodFilter);
+  const c = customer;
+  const outstanding = c.outstanding;
+  const address = [c.address, c.city, c.postcode].filter(Boolean).join(", ");
+  const isOnline = c.segments.includes("online");
+  const receivedTotal = ledger.filter((p) => !p.revoked).reduce((s, p) => s + p.amount, 0);
+  const accountCredit = c.ledger
+    .filter((p) => !p.revoked && !p.invoiceNumber)
+    .reduce((s, p) => s + p.amount, 0);
+  const hasOpenBills = c.invoices.some((i) => i.status !== "VOID" && i.balance > 0.001);
+  const methods = Array.from(new Set(c.ledger.map((p) => p.method)));
 
-  const overLimit =
-    customer.creditLimit !== null && customer.outstanding > customer.creditLimit;
+  const openPreview = (path: string, title: string, subtitle: string, filename: string) =>
+    setPreview({ src: path, title, subtitle, filename });
 
   return (
     <div>
-      <PageHeader
-        title={customer.name}
-        subtitle={
-          <span className="flex flex-wrap items-center gap-2">
-            {customer.company && <span className="text-muted">{customer.company}</span>}
-            {customer.segments.map((s) => {
+      <Link href="/portal/customers" className="text-sm text-muted hover:text-ink">
+        ← Customers
+      </Link>
+
+      {/* Header ------------------------------------------------------------ */}
+      <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-ink">{c.name || "(no name)"}</h1>
+            {c.segments.map((s) => {
               const def = SEGMENTS.find((x) => x.key === s);
               return def ? (
-                <span
-                  key={s}
-                  className={cx("rounded-md px-2 py-0.5 text-xs font-medium", def.badge)}
-                >
+                <span key={s} className={cx("rounded-md px-2 py-0.5 text-xs font-medium", def.badge)}>
                   {def.label}
                 </span>
               ) : null;
             })}
-          </span>
-        }
-        actions={
-          <>
-            <Button onClick={() => setEditOpen(true)}>Edit details</Button>
-            <Button variant="primary" onClick={() => setPayOpen(true)}>
-              Take payment
-            </Button>
-          </>
-        }
-      />
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            {c.company && <span className="font-medium text-ink-2">{c.company} · </span>}
+            {c.email || "no email"}
+            {c.phone ? ` · ${c.phone}` : ""}
+          </p>
+          {address && <p className="mt-0.5 text-sm text-faint">{address}</p>}
+          {c.openingBalance > 0 && (
+            <p className="mt-0.5 text-xs text-accent">
+              Opening balance brought forward: {gbp(c.openingBalance)}
+            </p>
+          )}
+        </div>
 
-      {overLimit && (
-        <div className="mb-4">
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setEditing((v) => !v)}>{editing ? "Close" : "Edit"}</Button>
+          <Button
+            onClick={() =>
+              void downloadFile(`/api/customers/${id}/export`, "customer.xlsx").catch((e) =>
+                toast.error(e instanceof Error ? e.message : "Export failed."),
+              )
+            }
+          >
+            Export data
+          </Button>
+          <Button
+            disabled={c.invoices.length === 0 && c.openingBalance <= 0}
+            onClick={() =>
+              openPreview(
+                `/api/public/statement/${id}`,
+                `Statement — ${c.name}`,
+                c.company || "",
+                `statement-${c.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`,
+              )
+            }
+          >
+            Statement
+          </Button>
+          <Button
+            loading={sending === "statement"}
+            disabled={c.invoices.length === 0 && c.openingBalance <= 0}
+            onClick={() => sendDoc("statement")}
+          >
+            Send statement
+          </Button>
+          <Button
+            onClick={() =>
+              openPreview(
+                `/api/customers/${id}/today`,
+                `Today's statement — ${c.name}`,
+                new Date().toLocaleDateString("en-GB"),
+                `today-${c.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`,
+              )
+            }
+          >
+            Today&apos;s statement
+          </Button>
+          <Button variant="primary" loading={sending === "today"} onClick={() => sendDoc("today")}>
+            Send today
+          </Button>
+          {outstanding > 0.001 && (
+            <Button
+              onClick={() =>
+                openPreview(
+                  `/api/customers/${id}/outstanding-invoice`,
+                  "Outstanding balance invoice",
+                  `${gbp(outstanding)} due · ${c.name}`,
+                  `outstanding-${c.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`,
+                )
+              }
+            >
+              Invoice outstanding ({gbp(outstanding)})
+            </Button>
+          )}
+          <Link
+            href={`/portal/billing?customer=${id}`}
+            className="inline-flex items-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-surface transition-colors hover:bg-accent hover:text-accentfg"
+          >
+            + New bill
+          </Link>
+        </div>
+      </div>
+
+      {editing && (
+        <EditCard
+          customer={c}
+          onSaved={() => {
+            setEditing(false);
+            void load();
+          }}
+          onDeleted={() => router.push("/portal/customers")}
+        />
+      )}
+
+      {/* Segment editor --------------------------------------------------- */}
+      <SegmentEditor customerId={id} current={c.segments} onSaved={load} />
+
+      {/* Trade code ------------------------------------------------------- */}
+      {isOnline && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-subtle p-3">
+          <span className="text-sm font-medium text-ink-2">🔑 Storefront trade code:</span>
+          {c.tradeCode ? (
+            <>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(c.tradeCode!);
+                  toast.success("Code copied.");
+                }}
+                className="rounded-lg border border-line bg-surface px-3 py-1 font-mono text-sm font-semibold tracking-widest text-ink"
+                title="Copy"
+              >
+                {c.tradeCode}
+              </button>
+              <button
+                onClick={() => act({ action: "trade-code" }, "Code issued.")}
+                disabled={busy}
+                className="text-xs text-muted hover:text-ink"
+              >
+                Regenerate
+              </button>
+            </>
+          ) : (
+            <Button size="sm" disabled={busy} onClick={() => act({ action: "trade-code" }, "Code issued.")}>
+              Generate code
+            </Button>
+          )}
+          <span className="text-xs text-faint">
+            Give this to the customer — they log in with their email + this code to see wholesale prices online.
+          </span>
+        </div>
+      )}
+
+      {outstanding > 0 && c.creditLimit !== null && outstanding > c.creditLimit && (
+        <div className="mt-4">
           <Alert tone="danger" title="Over their credit limit">
-            This account owes {money(customer.outstanding)} against a limit of{" "}
-            {money(customer.creditLimit!)}.
+            This account owes {gbp(outstanding)} against a limit of {gbp(c.creditLimit)}.
           </Alert>
         </div>
       )}
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total billed" value={money(customer.totalBilled)} />
-        <StatCard label="Total paid" value={money(customer.totalPaid)} tone="success" />
-        <StatCard
-          label="Outstanding"
-          value={
-            customer.outstanding < 0
-              ? `${money(Math.abs(customer.outstanding))} cr`
-              : money(customer.outstanding)
-          }
-          tone={customer.outstanding > 0 ? "warning" : "success"}
+      {/* Stats ------------------------------------------------------------ */}
+      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Stat label="Total billed" value={gbp(c.totalBilled)} />
+        <Stat label="Total paid" value={gbp(c.totalPaid)} tone="success" />
+        <Stat
+          label={outstanding < -0.001 ? "Account credit" : "Outstanding"}
+          value={gbp(Math.abs(outstanding))}
+          tone={outstanding > 0.001 ? "danger" : "success"}
         />
-        <StatCard
-          label="Opening balance"
-          value={money(customer.openingBalance)}
-          hint="Carried over from before"
-        />
+        <Stat label="Invoices" value={String(c.invoiceCount)} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
-        <div className="min-w-0 space-y-4">
-          {/* Invoices */}
-          <Card padded={false}>
-            <div className="border-b border-line px-4 py-3">
-              <h2 className="text-sm font-semibold text-ink">Invoice history</h2>
-            </div>
-            {customer.invoices.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-muted">
-                No invoices yet.
-              </p>
-            ) : (
-              <ul className="divide-y divide-line">
-                {customer.invoices.map((i) => (
-                  <li key={i.id} className="flex items-center gap-3 px-4 py-2.5">
-                    <Link
-                      href={`/portal/invoices/${i.id}`}
-                      className="min-w-0 flex-1 font-medium text-ink hover:text-accent"
-                    >
-                      {i.number}
-                    </Link>
-                    {(() => {
-                      const sv = statusView(
-                        i.status as InvoiceStatus,
-                        i.paid,
-                        i.balance,
-                      );
-                      return <Badge tone={sv.tone}>{sv.label}</Badge>;
-                    })()}
-                    <span className="w-24 text-right text-xs text-muted">
-                      {new Date(i.issuedAt).toLocaleDateString("en-GB")}
-                    </span>
-                    <span className="tnum w-20 text-right text-sm text-ink">
-                      {money(i.total)}
-                    </span>
-                    <span
-                      className={cx(
-                        "tnum w-20 text-right text-sm font-medium",
-                        i.balance > 0 ? "text-warning" : "text-muted",
-                      )}
-                    >
-                      {money(i.balance)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+      {/* Period statement ------------------------------------------------- */}
+      <PeriodStatementCard id={id} onPreview={openPreview} onSend={sendDoc} sending={sending === "statement"} name={c.name} />
 
-          {/* Ledger */}
-          <Card padded={false}>
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <div>
-                <h2 className="text-sm font-semibold text-ink">Payment ledger</h2>
-                <p className="text-xs text-muted">
-                  Revoked entries stay listed so corrections are visible.
-                </p>
-              </div>
-              {(() => {
-                const credit = customer.ledger
-                  .filter((p) => !p.revoked && !p.invoiceNumber)
-                  .reduce((s, p) => s + p.amount, 0);
-                const openBills = customer.invoices.some(
-                  (i) => i.status !== "VOID" && i.balance > 0.001,
-                );
-                return credit > 0.001 && openBills ? (
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      act(
-                        { action: "reapply-credit" },
-                        "Account credit re-applied to open bills.",
-                      )
-                    }
-                  >
-                    Re-apply {money(credit)} credit
-                  </Button>
-                ) : null;
-              })()}
-              <Select
-                value={methodFilter}
-                onChange={(e) => setMethodFilter(e.target.value)}
-                className="h-8 w-auto text-xs"
-                aria-label="Filter by method"
+      {/* Invoices + payments --------------------------------------------- */}
+      <div className="mt-7 grid gap-5 lg:grid-cols-2">
+        {/* Invoices */}
+        <Card padded={false} className="flex max-h-[520px] flex-col">
+          <div className="border-b border-line p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-ink">
+                Invoices <span className="text-sm font-normal text-faint">({invoices.length})</span>
+              </h2>
+              <Link
+                href={`/portal/billing?customer=${id}`}
+                className="rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-surface transition-colors hover:bg-accent hover:text-accentfg"
               >
-                <option value="all">All methods</option>
-                {PAYMENT_METHODS.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.label}
-                  </option>
-                ))}
-              </Select>
+                + New
+              </Link>
             </div>
-
-            {ledger.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-muted">
-                No payments recorded.
-              </p>
-            ) : (
-              <ul className="divide-y divide-line">
-                {ledger.map((p) => (
-                  <li
-                    key={p.id}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-line-strong p-0.5">
+                {(["all", "unpaid", "paid"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setInvFilter(f)}
                     className={cx(
-                      "flex items-center gap-3 px-4 py-2.5",
-                      p.revoked && "opacity-50",
+                      "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                      invFilter === f ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
                     )}
                   >
-                    <span
-                      className={cx(
-                        "tnum w-24 font-medium",
-                        p.revoked ? "text-muted line-through" : "text-success",
-                      )}
-                    >
-                      {money(p.amount)}
-                    </span>
-                    <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted">
-                      {p.revoked ? (
-                        <span className="truncate">{methodLabel(p.method)}</span>
-                      ) : (
-                        <select
-                          value={p.method}
-                          disabled={busy}
-                          onChange={(e) =>
-                            act(
-                              {
-                                action: "set-payment-method",
-                                paymentId: p.id,
-                                method: e.target.value as PaymentMethod,
-                              },
-                              "Payment method corrected.",
-                            )
-                          }
-                          aria-label="Correct payment method"
-                          className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs text-ink-2"
-                          title="Correct how this payment was taken"
-                        >
-                          {PAYMENT_METHODS.map((m) => (
-                            <option key={m.key} value={m.key}>
-                              {m.label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <span className="truncate">
-                        {p.invoiceNumber && ` · ${p.invoiceNumber}`}
-                        {p.note && ` · ${p.note}`}
-                      </span>
-                    </span>
-                    <span className="text-xs text-muted">
-                      {new Date(p.takenAt).toLocaleDateString("en-GB")}
-                    </span>
-                    {!p.revoked && (
-                      <>
-                        <a
-                          href={`/api/customers/${customer.id}/receipt?paymentId=${p.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs font-medium text-muted hover:text-accent"
-                        >
-                          Receipt
-                        </a>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            act(
-                              { action: "revoke-payment", paymentId: p.id },
-                              "Payment revoked.",
-                            )
-                          }
-                          className="text-xs font-medium text-muted hover:text-danger"
-                        >
-                          Revoke
-                        </button>
-                      </>
-                    )}
-                  </li>
+                    {f}
+                  </button>
                 ))}
-              </ul>
+              </div>
+              <Select
+                value={invSort}
+                onChange={(e) => setInvSort(e.target.value as "new" | "old" | "high")}
+                className="h-8 w-auto text-xs"
+                aria-label="Sort invoices"
+              >
+                <option value="new">Newest</option>
+                <option value="old">Oldest</option>
+                <option value="high">Highest £</option>
+              </Select>
+              <Input
+                value={invQ}
+                onChange={(e) => setInvQ(e.target.value)}
+                placeholder="Search #"
+                className="h-8 w-24 flex-1 text-xs"
+              />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-4">
+            {invoices.map((i) => {
+              const sv = statusView(i.status as InvoiceStatus, i.paid, i.balance);
+              return (
+                <Link
+                  key={i.id}
+                  href={`/portal/invoices/${i.id}`}
+                  className="flex items-center justify-between gap-3 py-2.5 text-sm hover:bg-subtle"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-ink">{i.number}</p>
+                    <p className="text-xs text-muted">
+                      {new Date(i.issuedAt).toLocaleDateString("en-GB")} · <Badge tone={sv.tone}>{sv.label}</Badge>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="tnum font-medium text-ink">{gbp(i.total)}</p>
+                    {i.balance > 0.001 ? (
+                      <p className="tnum text-xs text-warning">{gbp(i.balance)} due</p>
+                    ) : i.paid > 0 ? (
+                      <p className="text-xs text-success">paid</p>
+                    ) : null}
+                  </div>
+                </Link>
+              );
+            })}
+            {invoices.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted">
+                {c.invoices.length === 0 ? "No invoices yet." : "None match this filter."}
+              </p>
             )}
-          </Card>
-        </div>
+          </div>
+        </Card>
 
-        {/* Right rail */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader title="Contact" />
-            <dl className="mt-2 space-y-1.5 text-sm">
-              {[
-                ["Phone", customer.phone],
-                ["Email", customer.email],
-                ["Address", [customer.address, customer.city, customer.postcode].filter(Boolean).join(", ")],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-muted">{label}</dt>
-                  <dd className="min-w-0 truncate text-right text-ink">
-                    {value || "—"}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Documents"
-              subtitle="Statements — full history or a chosen period."
-            />
-            <div className="mt-3 space-y-3">
-              <Button
-                full
-                onClick={() =>
-                  setStmtSrc(`/api/public/statement/${customer.id}`)
-                }
+        {/* Payments */}
+        <Card padded={false} className="flex max-h-[520px] flex-col">
+          <div className="border-b border-line p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-ink">Payment history</h2>
+              <span className="rounded-lg bg-success-subtle px-2.5 py-1 text-xs font-semibold text-success">
+                Received {gbp(receivedTotal)}
+              </span>
+            </div>
+            {accountCredit > 0.001 && hasOpenBills && (
+              <button
+                onClick={() => act({ action: "reapply-credit" }, "Account credit re-applied to open bills.")}
+                disabled={busy}
+                className="mt-2 rounded-lg border border-accent/40 bg-accent-subtle px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent-subtle/70"
               >
-                Full statement PDF
-              </Button>
-
-              <div className="rounded-lg border border-line p-3">
-                <p className="mb-2 text-xs font-medium text-muted">
-                  Statement for a period
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="From">
-                    <Input
-                      type="date"
-                      value={stFrom}
-                      onChange={(e) => setStFrom(e.target.value)}
-                    />
-                  </Field>
-                  <Field label="To">
-                    <Input
-                      type="date"
-                      value={stTo}
-                      onChange={(e) => setStTo(e.target.value)}
-                    />
-                  </Field>
-                </div>
-                <Button
-                  full
-                  variant="secondary"
-                  className="mt-2"
-                  disabled={!stFrom || !stTo}
-                  onClick={() =>
-                    setStmtSrc(
-                      `/api/public/statement/${customer.id}?from=${stFrom}&to=${stTo}`,
-                    )
-                  }
+                ↻ Re-apply {gbp(accountCredit)} credit to bills
+              </button>
+            )}
+            {methods.length > 1 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <button
+                  onClick={() => setMethodFilter("all")}
+                  className={cx(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                    methodFilter === "all" ? "bg-ink text-surface" : "border border-line text-ink-2 hover:bg-subtle",
+                  )}
                 >
-                  Period statement PDF
-                </Button>
+                  All
+                </button>
+                {methods.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMethodFilter(m)}
+                    className={cx(
+                      "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                      methodFilter === m ? "bg-ink text-surface" : "border border-line text-ink-2 hover:bg-subtle",
+                    )}
+                  >
+                    {methodLabel(m)}
+                  </button>
+                ))}
               </div>
-
-              <a
-                href={`/api/customers/${customer.id}/export`}
-                className="block"
-                download
+            )}
+            <RecordPayment id={id} outstanding={outstanding} busy={busy} onRecord={act} />
+          </div>
+          <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-4">
+            {ledger.map((p) => (
+              <div
+                key={p.id}
+                className={cx("flex items-center justify-between gap-2 py-2.5 text-sm", p.revoked && "opacity-50")}
               >
-                <Button full variant="secondary">
-                  Export full record (Excel)
-                </Button>
-              </a>
-
-              {/* Send the statement straight to the customer. Uses the period
-                  above when both dates are set, otherwise the full history. */}
-              <div className="rounded-lg border border-line p-3">
-                <p className="mb-2 text-xs font-medium text-muted">
-                  Send statement to customer
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!customer.email || !!sending}
-                    loading={sending === "statement-email"}
-                    onClick={() => sendDoc("statement", "email")}
-                    title={customer.email ? undefined : "No email on file"}
-                  >
-                    Email
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!customer.phone || !!sending}
-                    loading={sending === "statement-whatsapp"}
-                    onClick={() => sendDoc("statement", "whatsapp")}
-                    title={customer.phone ? undefined : "No phone on file"}
-                  >
-                    WhatsApp
-                  </Button>
+                <div className="min-w-0">
+                  <p className={cx("tnum font-medium", p.revoked ? "text-muted line-through" : "text-success")}>
+                    {gbp(p.amount)} <span className="font-normal text-muted">· {methodLabel(p.method)}</span>
+                  </p>
+                  <p className="truncate text-xs text-muted">
+                    {new Date(p.takenAt).toLocaleDateString("en-GB")}
+                    {p.invoiceNumber ? ` · ${p.invoiceNumber}` : " · On account"}
+                    {p.note ? ` · ${p.note}` : ""}
+                  </p>
                 </div>
+                {!p.revoked &&
+                  (p.invoiceNumber ? (
+                    <span className="shrink-0 rounded-md bg-success-subtle px-2 py-1 text-xs font-medium text-success">
+                      on bill
+                    </span>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-2 text-xs">
+                      <select
+                        value={p.method}
+                        disabled={busy}
+                        onChange={(e) =>
+                          act(
+                            { action: "set-payment-method", paymentId: p.id, method: e.target.value as PaymentMethod },
+                            "Payment method corrected.",
+                          )
+                        }
+                        className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs text-ink-2"
+                        title="Correct how this payment was taken"
+                        aria-label="Correct payment method"
+                      >
+                        {PAYMENT_METHODS.map((m) => (
+                          <option key={m.key} value={m.key}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                      <a
+                        href={`/api/customers/${id}/receipt?paymentId=${p.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-muted hover:text-accent"
+                      >
+                        Receipt
+                      </a>
+                      <button
+                        onClick={() => act({ action: "revoke-payment", paymentId: p.id }, "Payment revoked.")}
+                        disabled={busy}
+                        className="font-medium text-muted hover:text-danger"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
               </div>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Today's summary"
-              subtitle="Their itemised bills for today, with the balance."
-            />
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!customer.email || !!sending}
-                loading={sending === "today-email"}
-                onClick={() => sendDoc("today", "email")}
-                title={customer.email ? undefined : "No email on file"}
-              >
-                Email
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!customer.phone || !!sending}
-                loading={sending === "today-whatsapp"}
-                onClick={() => sendDoc("today", "whatsapp")}
-                title={customer.phone ? undefined : "No phone on file"}
-              >
-                WhatsApp
-              </Button>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Trade code"
-              subtitle="For trade pricing if you switch a storefront on later."
-            />
-            <div className="mt-3">
-              {customer.tradeCode ? (
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-lg bg-subtle px-3 py-2 text-center font-mono text-sm tracking-widest text-ink">
-                    {customer.tradeCode}
-                  </code>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(customer.tradeCode!);
-                      toast.success("Code copied.");
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  full
-                  disabled={busy}
-                  onClick={() => act({ action: "trade-code" }, "Code issued.")}
-                >
-                  Generate a code
-                </Button>
-              )}
-            </div>
-          </Card>
-        </div>
+            ))}
+            {ledger.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted">
+                {c.ledger.length === 0 ? "No payments recorded." : "None match this filter."}
+              </p>
+            )}
+          </div>
+        </Card>
       </div>
 
-      <AccountPaymentModal
-        open={payOpen}
-        onClose={() => setPayOpen(false)}
-        outstanding={customer.outstanding}
-        busy={busy}
-        onConfirm={(amount, method, note) =>
-          act({ action: "payment", amount, method, note }, "Payment recorded.")
-        }
-      />
-
-      {stmtSrc && (
+      {preview && (
         <PdfPreviewModal
-          src={stmtSrc}
-          title={`Statement — ${customer.name}`}
-          subtitle={customer.company || undefined}
-          filename={`statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`}
-          onClose={() => setStmtSrc(null)}
+          src={preview.src}
+          title={preview.title}
+          subtitle={preview.subtitle}
+          filename={preview.filename}
+          onClose={() => setPreview(null)}
         />
       )}
-
-      <EditCustomerModal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        customer={customer}
-        onSaved={(updated) => {
-          setCustomer((prev) => (prev ? { ...prev, ...updated } : prev));
-          setEditOpen(false);
-          void load();
-        }}
-      />
     </div>
   );
 }
 
-function AccountPaymentModal({
-  open,
-  onClose,
+/* -------------------------------------------------------------------------- */
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "success" | "danger" }) {
+  const color = tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-ink";
+  return (
+    <Card>
+      <p className="text-xs font-medium uppercase tracking-wide text-muted">{label}</p>
+      <p className={cx("tnum mt-2 text-2xl font-semibold", color)}>{value}</p>
+    </Card>
+  );
+}
+
+function SegmentEditor({
+  customerId,
+  current,
+  onSaved,
+}: {
+  customerId: string;
+  current: SegmentKey[];
+  onSaved: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [sel, setSel] = useState<SegmentKey[]>(current);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setSel(current), [current]);
+
+  const changed = sel.slice().sort().join(",") !== current.slice().sort().join(",");
+  const toggle = (k: SegmentKey) =>
+    setSel((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/customers/${customerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segments: sel }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed");
+      toast.success("Segments saved.");
+      await onSaved();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-3">
+      <span className="text-sm font-medium text-ink-2">Segment:</span>
+      {SEGMENTS.map((s) => (
+        <button
+          key={s.key}
+          onClick={() => toggle(s.key)}
+          title={s.description}
+          className={cx(
+            "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+            sel.includes(s.key) ? "border-accent bg-accent-subtle text-accent" : "border-line text-muted hover:bg-subtle",
+          )}
+        >
+          {sel.includes(s.key) ? "✓ " : ""}
+          {s.label}
+        </button>
+      ))}
+      {changed && (
+        <Button size="sm" loading={saving} onClick={save}>
+          Save
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function PeriodStatementCard({
+  id,
+  name,
+  onPreview,
+  onSend,
+  sending,
+}: {
+  id: string;
+  name: string;
+  onPreview: (path: string, title: string, subtitle: string, filename: string) => void;
+  onSend: (kind: "statement", opts: { from?: string; to?: string }) => void;
+  sending: boolean;
+}) {
+  const [period, setPeriod] = useState("1m");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  const range = periodRange(period, from, to);
+  const qs = range.from && range.to ? `?from=${range.from}&to=${range.to}` : "";
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface p-4">
+      <span className="text-sm font-semibold text-ink">📄 Account statement for period:</span>
+      <Select value={period} onChange={(e) => setPeriod(e.target.value)} className="h-9 w-auto">
+        {PERIODS.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
+          </option>
+        ))}
+      </Select>
+      {period === "custom" && (
+        <>
+          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-auto" />
+          <span className="text-sm text-faint">→</span>
+          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-auto" />
+        </>
+      )}
+      <Button
+        onClick={() =>
+          onPreview(
+            `/api/public/statement/${id}${qs}`,
+            `Statement — ${name}`,
+            range.label,
+            `statement-${name.replace(/[^a-z0-9]+/gi, "-")}.pdf`,
+          )
+        }
+      >
+        Preview / download
+      </Button>
+      <Button
+        variant="primary"
+        loading={sending}
+        onClick={() => onSend("statement", { from: range.from || undefined, to: range.to || undefined })}
+      >
+        Send
+      </Button>
+    </div>
+  );
+}
+
+function RecordPayment({
+  id,
   outstanding,
   busy,
-  onConfirm,
+  onRecord,
 }: {
-  open: boolean;
-  onClose: () => void;
+  id: string;
   outstanding: number;
   busy: boolean;
-  onConfirm: (amount: number, method: PaymentMethod, note: string) => void;
+  onRecord: (body: Record<string, unknown>, message: string) => Promise<void>;
 }) {
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [note, setNote] = useState("");
 
-  useEffect(() => {
-    if (open) {
-      setAmount(outstanding > 0 ? String(outstanding) : "");
-      setNote("");
-    }
-  }, [open, outstanding]);
+  const save = async () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) return;
+    await onRecord({ action: "payment", amount: amt, method, note }, "Payment recorded.");
+    setAmount("");
+    setNote("");
+  };
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Take a payment"
-      subtitle="Goes against the account balance rather than one invoice."
-      size="sm"
-      dismissable={!busy}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            loading={busy}
-            onClick={() => onConfirm(Number(amount) || 0, method, note)}
-          >
-            Record payment
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <Field label="Amount" required>
-          <Input
-            autoFocus
-            type="number"
-            step="0.01"
-            min="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="h-12 text-lg"
-          />
-        </Field>
-        <Field label="Method">
-          <Select
-            value={method}
-            onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-          >
-            {PAYMENT_METHODS.map((m) => (
-              <option key={m.key} value={m.key}>
-                {m.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Note">
-          <Input value={note} onChange={(e) => setNote(e.target.value)} />
-        </Field>
+    <div className="mt-3 rounded-xl bg-subtle p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="Amount £"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          className="h-9 w-28"
+        />
+        <Select
+          value={method}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+          className="h-9 w-auto"
+          aria-label="Payment method"
+        >
+          {PAYMENT_METHODS.map((m) => (
+            <option key={m.key} value={m.key}>
+              {m.label}
+            </option>
+          ))}
+        </Select>
+        <Input
+          placeholder="Note (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          className="h-9 flex-1"
+        />
+        <Button variant="primary" loading={busy} disabled={!amount} onClick={save}>
+          Record payment
+        </Button>
       </div>
-    </Modal>
+      {outstanding > 0 && (
+        <button
+          onClick={() => setAmount(outstanding.toFixed(2))}
+          className="mt-2 text-xs text-accent hover:underline"
+        >
+          Pay full outstanding ({gbp(outstanding)})
+        </button>
+      )}
+    </div>
   );
 }
 
-function EditCustomerModal({
-  open,
-  onClose,
+function EditCard({
   customer,
   onSaved,
+  onDeleted,
 }: {
-  open: boolean;
-  onClose: () => void;
   customer: CustomerDetail;
-  onSaved: (updated: Partial<CustomerDetail>) => void;
+  onSaved: () => void;
+  onDeleted: () => void;
 }) {
   const toast = useToast();
-  const router = useRouter();
   const [form, setForm] = useState({ ...customer });
   const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<CustomerDetail>) => setForm((prev) => ({ ...prev, ...patch }));
 
-  useEffect(() => {
-    if (open) setForm({ ...customer });
-  }, [open, customer]);
-
-  const remove = async () => {
-    if (
-      !window.confirm(
-        `Remove ${customer.company || customer.name}? This cannot be undone. Customers with invoice history cannot be removed — their records are kept.`,
-      )
-    )
-      return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/customers/${customer.id}`, { method: "DELETE" });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error ?? "That customer was not removed.");
-      toast.success("Customer removed.");
-      router.push("/portal/customers");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const set = (patch: Partial<CustomerDetail>) =>
-    setForm((prev) => ({ ...prev, ...patch }));
-
-  const submit = async () => {
+  const save = async () => {
     setBusy(true);
     try {
       const res = await fetch(`/api/customers/${customer.id}`, {
@@ -739,19 +828,15 @@ function EditCustomerModal({
           address: form.address,
           city: form.city,
           postcode: form.postcode,
-          segments: form.segments,
           openingBalance: Number(form.openingBalance) || 0,
           creditLimit:
-            form.creditLimit === null || String(form.creditLimit) === ""
-              ? null
-              : Number(form.creditLimit),
+            form.creditLimit === null || String(form.creditLimit) === "" ? null : Number(form.creditLimit),
           notes: form.notes,
         }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Those details were not saved.");
+      if (!res.ok) throw new Error((await res.json()).error ?? "Those details were not saved.");
       toast.success("Customer updated.");
-      onSaved(body);
+      onSaved();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -759,108 +844,90 @@ function EditCustomerModal({
     }
   };
 
+  const remove = async () => {
+    if (
+      !window.confirm(
+        `Remove ${customer.company || customer.name}? Customers with invoice history are kept automatically.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/customers/${customer.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "That customer was not removed.");
+      toast.success("Customer removed.");
+      onDeleted();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const F = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium text-ink-2">{label}</span>
+      {children}
+    </label>
+  );
+
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Edit customer"
-      size="md"
-      dismissable={!busy}
-      footer={
-        <>
-          <Button variant="danger" onClick={remove} disabled={busy} className="mr-auto">
-            Delete customer
-          </Button>
-          <Button onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button variant="primary" loading={busy} onClick={submit}>
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Name" required className="sm:col-span-2">
+    <Card className="mt-4">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Edit customer</h2>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <F label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} />
-        </Field>
-        <Field label="Company">
+        </F>
+        <F label="Company">
           <Input value={form.company} onChange={(e) => set({ company: e.target.value })} />
-        </Field>
-        <Field label="Phone">
-          <PhoneField value={form.phone} onChange={(v) => set({ phone: v })} />
-        </Field>
-        <Field label="Email" className="sm:col-span-2">
+        </F>
+        <F label="Email">
           <Input value={form.email} onChange={(e) => set({ email: e.target.value })} />
-        </Field>
-        <Field label="Address" className="sm:col-span-2">
+        </F>
+        <F label="Phone">
+          <Input value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+        </F>
+        <F label="Address">
           <Input value={form.address} onChange={(e) => set({ address: e.target.value })} />
-        </Field>
-        <Field label="Town / city">
-          <Input value={form.city} onChange={(e) => set({ city: e.target.value })} />
-        </Field>
-        <Field label="Postcode">
-          <Input value={form.postcode} onChange={(e) => set({ postcode: e.target.value })} />
-        </Field>
-        <Field
-          label="Opening balance"
-          hint="Debt carried over from before this system."
-        >
+        </F>
+        <div className="grid grid-cols-2 gap-3">
+          <F label="Town / city">
+            <Input value={form.city} onChange={(e) => set({ city: e.target.value })} />
+          </F>
+          <F label="Postcode">
+            <Input value={form.postcode} onChange={(e) => set({ postcode: e.target.value })} />
+          </F>
+        </div>
+        <F label="Opening balance (£)">
           <Input
             type="number"
             step="0.01"
             value={form.openingBalance}
             onChange={(e) => set({ openingBalance: Number(e.target.value) })}
           />
-        </Field>
-        <Field label="Credit limit" hint="Leave blank for no limit.">
+        </F>
+        <F label="Credit limit (£)">
           <Input
             type="number"
             step="0.01"
             value={form.creditLimit ?? ""}
-            onChange={(e) =>
-              set({
-                creditLimit: e.target.value === "" ? null : Number(e.target.value),
-              })
-            }
+            onChange={(e) => set({ creditLimit: e.target.value === "" ? null : Number(e.target.value) })}
           />
-        </Field>
-        <Field label="Source" className="sm:col-span-2">
-          <div className="flex flex-wrap gap-1.5">
-            {SEGMENTS.map((s) => {
-              const on = form.segments.includes(s.key);
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() =>
-                    set({
-                      segments: on
-                        ? form.segments.filter((x) => x !== s.key)
-                        : ([...form.segments, s.key] as SegmentKey[]),
-                    })
-                  }
-                  className={cx(
-                    "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
-                    on
-                      ? "border-accent bg-accent-subtle text-accent"
-                      : "border-line text-muted hover:bg-subtle",
-                  )}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-        <Field label="Notes" className="sm:col-span-2">
-          <Textarea
-            rows={2}
-            value={form.notes}
-            onChange={(e) => set({ notes: e.target.value })}
-          />
-        </Field>
+        </F>
+        <div className="sm:col-span-2">
+          <F label="Notes">
+            <Textarea rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
+          </F>
+        </div>
       </div>
-    </Modal>
+      <div className="mt-4 flex items-center gap-2">
+        <Button variant="primary" loading={busy} onClick={save}>
+          Save changes
+        </Button>
+        <Button variant="danger" disabled={busy} onClick={remove} className="ml-auto">
+          Delete customer
+        </Button>
+      </div>
+    </Card>
   );
 }

@@ -13,6 +13,28 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/** Preview the itemised "today" statement PDF inline (for the preview modal). */
+export async function GET(_req: Request, { params }: Ctx) {
+  const denied = await requireAnyPermission(["customers", "invoices"]);
+  if (denied) return denied;
+  try {
+    const { id } = await params;
+    const pdf = await customerDayPdf(id);
+    if (!pdf) {
+      return NextResponse.json({ error: "No bills for this customer today." }, { status: 404 });
+    }
+    return new NextResponse(new Uint8Array(pdf.buffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${pdf.filename}"`,
+        "Cache-Control": "private, no-store",
+      },
+    });
+  } catch (err) {
+    return errorResponse(err, "build today's statement");
+  }
+}
+
 /**
  * Send one customer their day summary — the manual counterpart to the digest,
  * used by the "today's send" drawer. Channel is chosen by the caller.
