@@ -117,6 +117,9 @@ model CashUp {
   cardVariance Decimal @default(0) @db.Decimal(12, 2)
   /// Full takings split {cash, card, bank, account, total} at cash-up time.
   byMethod    Json
+  /// The full hand-entered closing sheet (customer lines, other cash/card,
+  /// expense lines, counted figures) — MOBILE ICU's manual cash-up sheet.
+  sheet       Json?
   note        String   @default("")
 
   @@index([businessDay])

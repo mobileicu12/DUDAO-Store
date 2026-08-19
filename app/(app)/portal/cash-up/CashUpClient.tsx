@@ -1,419 +1,573 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { money } from "@/lib/business";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Field,
-  Input,
-  PageHeader,
-  SectionLabel,
-  Skeleton,
-  StatCard,
-} from "@/components/ui/primitives";
-import { useToast } from "@/components/ui/Toast";
+import { downloadFile } from "@/lib/download";
+import { buildCashUpDoc, cashUpFilename } from "@/lib/cashup-pdf";
+import { sheetTotals, emptyCashUp, bucket, round2, type CashUp, type CashUpLine, type DayTakings } from "@/lib/cashup-types";
+import { loadBusiness, BUSINESS } from "@/lib/business";
 
-type Method = "cash" | "card" | "bank" | "account";
-type Breakdown = Record<Method, number> & { total: number };
-type Line = { name: string; method: string; amount: number };
-
-type Settlement = {
-  businessDay: string;
-  byMethod: Breakdown;
-  expectedCash: number;
-  expectedCard: number;
-  cashExpenses: number;
-  paymentCount: number;
-  accountLines: Line[];
-  counterByMethod: Breakdown;
-};
-
-type CashUp = {
-  id: string;
-  businessDay: string;
-  createdAt: string;
-  who: string;
-  float: number;
-  expectedCash: number;
-  cashExpenses: number;
-  countedCash: number;
-  variance: number;
-  countedCard: number;
-  cardVariance: number;
-  note: string;
-};
-
-const dt = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-const METHOD_LABEL: Record<Method, string> = {
-  cash: "Cash",
-  card: "Card",
-  bank: "Bank transfer",
-  account: "On account",
-};
-
-const varianceTone = (v: number) =>
-  v === 0 ? "success" : Math.abs(v) < 1 ? "warning" : "danger";
+const gbp = (n: number) => `£${(Number(n) || 0).toFixed(2)}`;
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const dayLabel = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+const METHODS = ["cash", "card", "bank transfer", "other"];
 
 export default function CashUpClient() {
-  const toast = useToast();
-  const [settlement, setSettlement] = useState<Settlement | null>(null);
+  const [date, setDate] = useState(todayStr());
+  const [takings, setTakings] = useState<DayTakings | null>(null);
   const [history, setHistory] = useState<CashUp[]>([]);
+  const [savedAt, setSavedAt] = useState<{ by: string; at: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [counted, setCounted] = useState("");
-  const [countedCard, setCountedCard] = useState("");
-  const [float, setFloat] = useState("");
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [flash, setFlash] = useState("");
+  const [busy, setBusy] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch("/api/cash-up", { cache: "no-store" });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Could not load the cash-up.");
-      setSettlement(d.settlement);
-      setHistory(d.history ?? []);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not load the cash-up.");
-    } finally {
-      setLoading(false);
+  // The sheet staff fill in.
+  const [sheet, setSheet] = useState<CashUp>(() => emptyCashUp(todayStr()));
+
+  const load = useCallback(() => {
+    return fetch(`/api/cash-up?date=${date}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setError(d.error || "");
+        if (d.error) return;
+        const sys: DayTakings | null = d.takings ?? null;
+        setTakings(sys);
+        setHistory(d.history ?? []);
+        const saved: CashUp | null = d.saved ?? null;
+        if (saved) {
+          setSheet({ ...emptyCashUp(date), ...saved });
+          setSavedAt({ by: saved.closedBy, at: saved.closedAt });
+        } else {
+          // Fresh sheet. Customer payments and "other" start BLANK on purpose —
+          // they're the independent count. Expenses are pre-filled from the
+          // Expenses page, because staff are confirming a list that already
+          // exists rather than inventing one.
+          setSheet({ ...emptyCashUp(date), expenseLines: sys?.expenseLines ?? [] });
+          setSavedAt(null);
+        }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [date]);
+  useEffect(() => { void load(); }, [load]);
+
+  const t = sheetTotals(sheet);
+  const expectedCash = sheet.openingFloat + t.byMethod.cash - t.cashExpenses;
+  const variance = sheet.countedCash - expectedCash;
+  const balanced = Math.abs(variance) < 0.01;
+
+  // Sheet vs portal, per method.
+  const diffs = takings
+    ? [
+        { label: "Cash", sheet: t.byMethod.cash, sys: takings.receivedByMethod.cash },
+        { label: "Card", sheet: t.byMethod.card, sys: takings.receivedByMethod.card },
+        { label: "Total received", sheet: t.receivedTotal, sys: takings.receivedTotal },
+      ]
+    : [];
+  const anyDrift = diffs.some((d) => Math.abs(d.sheet - d.sys) >= 0.01);
+
+  // A method total that's £120 out tells you nothing about WHICH payment it is.
+  // This lines the two sides up name by name and method by method, and keeps
+  // only the rows that disagree — so the odd one out is the row on screen.
+  const COUNTER = "Counter / other";
+  const driftLines = useMemo(() => {
+    if (!takings) return [];
+    const rows = new Map<string, { name: string; method: string; sheet: number; portal: number }>();
+    const put = (name: string, method: string, side: "sheet" | "portal", amount: number) => {
+      const clean = (name || "—").trim();
+      if (!clean && !amount) return;
+      const key = `${clean.toLowerCase()}||${bucket(method)}`;
+      const row = rows.get(key) ?? { name: clean, method: bucket(method), sheet: 0, portal: 0 };
+      row[side] = round2(row[side] + (Number(amount) || 0));
+      // Keep whichever spelling has capitals the staff would recognise.
+      if (side === "sheet" && clean) row.name = clean;
+      rows.set(key, row);
+    };
+
+    for (const l of takings.accountLines) put(l.name, l.method, "portal", l.amount);
+    for (const l of takings.creditLines) put(l.name, l.method, "portal", l.amount);
+    for (const m of Object.keys(takings.counterByMethod) as (keyof typeof takings.counterByMethod)[]) {
+      if (takings.counterByMethod[m]) put(COUNTER, m, "portal", takings.counterByMethod[m]);
     }
-  }, [toast]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+    for (const l of sheet.customerLines) put(l.name, l.method, "sheet", l.amount);
+    if (sheet.otherCash) put(COUNTER, "cash", "sheet", sheet.otherCash);
+    if (sheet.otherCard) put(COUNTER, "card", "sheet", sheet.otherCard);
 
-  const expectedCash = settlement?.expectedCash ?? 0;
-  const expectedCard = settlement?.expectedCard ?? 0;
+    return [...rows.values()]
+      .map((r) => ({ ...r, diff: round2(r.sheet - r.portal) }))
+      .filter((r) => Math.abs(r.diff) >= 0.01)
+      .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  }, [takings, sheet]);
 
-  const variance = useMemo(() => {
-    if (counted === "") return null;
-    return Math.round(((Number(counted) || 0) - (Number(float) || 0) - expectedCash) * 100) / 100;
-  }, [counted, float, expectedCash]);
+  // The same name out by the same amount in two directions is one payment
+  // logged under the wrong method, not two missing payments.
+  const methodMixUps = new Set(
+    driftLines
+      .filter((r) => driftLines.some((o) => o !== r && o.name.toLowerCase() === r.name.toLowerCase() && Math.abs(o.diff + r.diff) < 0.01))
+      .map((r) => r.name.toLowerCase()),
+  );
 
-  const cardVariance = useMemo(() => {
-    if (countedCard === "") return null;
-    return Math.round(((Number(countedCard) || 0) - expectedCard) * 100) / 100;
-  }, [countedCard, expectedCard]);
+  function set<K extends keyof CashUp>(k: K, v: CashUp[K]) { setSheet((p) => ({ ...p, [k]: v })); }
+  function setLine(key: "customerLines" | "expenseLines", i: number, patch: Partial<CashUpLine>) {
+    setSheet((p) => ({ ...p, [key]: p[key].map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
+    // Touching the amount by hand makes it a counted figure again.
+    if (key === "customerLines" && patch.amount !== undefined) {
+      setPrefilled((p) => {
+        const name = sheet.customerLines[i]?.name.trim().toLowerCase();
+        if (!name || !p.has(name)) return p;
+        const n = new Set(p); n.delete(name); return n;
+      });
+    }
+  }
+  function addLine(key: "customerLines" | "expenseLines") {
+    setSheet((p) => ({ ...p, [key]: [...p[key], { name: "", amount: 0, method: "cash" }] }));
+  }
+  function removeLine(key: "customerLines" | "expenseLines", i: number) {
+    setSheet((p) => ({ ...p, [key]: p[key].filter((_, j) => j !== i) }));
+  }
+
+  // Who the portal saw paying today that isn't on the sheet yet.
+  //
+  // Tapping one copies the whole row across, amount included, because retyping
+  // figures the portal already holds is exactly the work staff wanted removed.
+  // The cost is that a copied amount can't disagree with the portal, so the
+  // sheet-vs-portal check below can't vouch for it — those lines are tracked
+  // here and called out there, rather than being quietly counted as verified.
+  // Credits count too — someone who paid onto their account with no bill open
+  // is still a customer who handed money over today.
+  const suggestions = [...(takings?.accountLines ?? []), ...(takings?.creditLines ?? [])].filter(
+    (s) => !sheet.customerLines.some((l) => l.name.trim().toLowerCase() === s.name.trim().toLowerCase()),
+  );
+
+  // Lower-cased names whose amount came from the portal rather than a count.
+  const [prefilled, setPrefilled] = useState<Set<string>>(new Set());
+  const prefilledTotal = sheet.customerLines
+    .filter((l) => prefilled.has(l.name.trim().toLowerCase()))
+    .reduce((s, l) => s + (Number(l.amount) || 0), 0);
+
+  function addSuggestion(s: CashUpLine) {
+    setSheet((p) => {
+      const blank = p.customerLines.findIndex((l) => !l.name.trim() && !l.amount);
+      const line: CashUpLine = { name: s.name, amount: s.amount, method: s.method };
+      if (blank >= 0) return { ...p, customerLines: p.customerLines.map((l, j) => (j === blank ? line : l)) };
+      return { ...p, customerLines: [...p.customerLines, line] };
+    });
+    setPrefilled((p) => new Set(p).add(s.name.trim().toLowerCase()));
+  }
+
+  function addAllSuggestions() {
+    suggestions.forEach(addSuggestion);
+  }
 
   async function save() {
-    if (counted === "") {
-      toast.error("Enter the counted cash first.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const r = await fetch("/api/cash-up", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          countedCash: Number(counted),
-          countedCard: countedCard === "" ? 0 : Number(countedCard),
-          float: Number(float) || 0,
-          note,
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Could not record the cash-up.");
-      toast.success(
-        d.variance === 0
-          ? "Cash-up recorded — drawer balanced."
-          : `Cash-up recorded — ${d.variance < 0 ? "short" : "over"} by ${money(Math.abs(d.variance))}.`,
+    // Last stop before the day is closed. Suggestions sitting untouched almost
+    // always mean someone was forgotten rather than deliberately left off, and
+    // once the sheet is saved nobody looks at the chips again.
+    if (suggestions.length > 0) {
+      const who = suggestions.map((s) => `  • ${s.name} — ${gbp(s.amount)} ${s.method}`).join("\n");
+      const ok = confirm(
+        `${suggestions.length} customer payment${suggestions.length > 1 ? "s" : ""} the portal recorded today ${suggestions.length > 1 ? "are" : "is"} not on your sheet:\n\n${who}\n\n` +
+        `Save the cash-up without ${suggestions.length > 1 ? "them" : "it"}?`,
       );
-      setCounted("");
-      setCountedCard("");
-      setFloat("");
-      setNote("");
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not record the cash-up.");
-    } finally {
-      setSaving(false);
+      if (!ok) return;
     }
+    setBusy("save"); setError(""); setFlash("");
+    try {
+      const res = await fetch("/api/cash-up", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...sheet, date }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't save.");
+      setFlash(`Cash-up saved for ${dayLabel(date)}.`);
+      setTimeout(() => setFlash(""), 6000);
+      setLoading(true);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Couldn't save."); } finally { setBusy(""); }
   }
 
-  function exportCsv() {
-    const header = [
-      "Day",
-      "Recorded",
-      "By",
-      "Float",
-      "Expected cash",
-      "Cash expenses",
-      "Counted cash",
-      "Cash variance",
-      "Counted card",
-      "Card variance",
-      "Note",
-    ];
-    const lines = history.map((h) =>
-      [
-        h.businessDay,
-        new Date(h.createdAt).toLocaleString("en-GB"),
-        h.who,
-        h.float.toFixed(2),
-        h.expectedCash.toFixed(2),
-        h.cashExpenses.toFixed(2),
-        h.countedCash.toFixed(2),
-        h.variance.toFixed(2),
-        h.countedCard.toFixed(2),
-        h.cardVariance.toFixed(2),
-        h.note,
-      ]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-        .join(","),
-    );
-    const blob = new Blob([[header.join(","), ...lines].join("\n")], {
-      type: "text/csv",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `cash-ups-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  async function pdf(): Promise<Blob> {
+    const doc = buildCashUpDoc(date, { ...sheet, date }, takings, await loadBusiness());
+    return doc.output("blob");
   }
+
+  async function downloadPdf() {
+    setBusy("pdf");
+    try {
+      const url = URL.createObjectURL(await pdf());
+      const a = document.createElement("a");
+      a.href = url; a.download = cashUpFilename(date, await loadBusiness()); a.click();
+      URL.revokeObjectURL(url);
+    } finally { setBusy(""); }
+  }
+
+  function downloadExcel() {
+    // Server-rendered from the SAVED record, so save first or you'll export stale numbers.
+    if (!savedAt) { setError("Save the cash-up first — the Excel export is built from the saved record."); return; }
+    setBusy("excel"); setError("");
+    downloadFile(`/api/cash-up/export?date=${date}`, `cashup-${date}.xlsx`)
+      .catch((e) => setError(e instanceof Error ? e.message : "Export failed."))
+      .finally(() => setBusy(""));
+  }
+
+  // Share to a WhatsApp group: wa.me can't attach a file, so the message carries
+  // the figures and the PDF is downloaded alongside for manual attachment.
+  async function shareWhatsApp() {
+    setBusy("share");
+    try {
+      const lines = sheet.customerLines.filter((l) => l.name.trim() || l.amount > 0)
+        .map((l) => `• ${l.name || "—"}: ${gbp(l.amount)} ${l.method}`).join("\n");
+      const msg =
+        `*${BUSINESS.name} — Cash-up ${dayLabel(date)}*\n\n` +
+        (lines ? `*Wholesale paid*\n${lines}\n\n` : "") +
+        `*Other collected*\nCash ${gbp(sheet.otherCash)} · Card ${gbp(sheet.otherCard)}\n\n` +
+        `*Totals*\nCash ${gbp(t.byMethod.cash)}\nCard ${gbp(t.byMethod.card)}\nTotal ${gbp(t.receivedTotal)}\n\n` +
+        `*Expenses* ${gbp(t.expensesTotal)} (${gbp(t.cashExpenses)} from till)\n\n` +
+        `*Left in drawer*\nExpected ${gbp(expectedCash)}\nCounted ${gbp(sheet.countedCash)}\n` +
+        `*In hand now (cash + card)* ${gbp(sheet.countedCash + t.byMethod.card)}\n` +
+        (balanced ? "✅ Balances" : `⚠️ ${variance > 0 ? "Over" : "Short"} ${gbp(Math.abs(variance))}`) +
+        (sheet.note ? `\n\nNote: ${sheet.note}` : "");
+      await downloadPdf();
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+    } finally { setBusy(""); }
+  }
+
+  const inp = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent";
+  const num = "rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent";
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Cash up"
-        subtitle="Count the drawer at close and reconcile it against today's takings."
-        actions={
-          <Button
-            variant="secondary"
-            disabled={history.length === 0}
-            onClick={exportCsv}
-          >
-            Export CSV
-          </Button>
-        }
-      />
-
-      {/* Today's takings by method */}
-      <div>
-        <SectionLabel>Today&apos;s takings</SectionLabel>
-        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {(["cash", "card", "bank", "account"] as Method[]).map((m) => (
-            <StatCard
-              key={m}
-              label={METHOD_LABEL[m]}
-              value={money(settlement?.byMethod[m] ?? 0)}
-              tone={m === "cash" ? "accent" : "neutral"}
-              loading={loading}
-            />
-          ))}
+    <div className="px-8 py-7 pb-16">
+      <div className="sticky top-0 z-20 -mx-8 mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-bg/95 px-8 py-3 backdrop-blur">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink">Cash-up</h1>
+          <p className="text-sm text-muted">Enter the day by hand, then check it against the portal.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={date} max={todayStr()} onChange={(e) => { setDate(e.target.value); setLoading(true); }} className={num} />
+          <button onClick={() => { setLoading(true); void load(); }} className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-ink">↻</button>
+          <button onClick={save} disabled={!!busy} className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent hover:text-accentfg disabled:opacity-50">
+            {busy === "save" ? "Saving…" : savedAt ? "Update" : "Save"}
+          </button>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Count the drawer */}
-        <Card>
-          <div className="space-y-4 p-4 sm:p-5">
-            <SectionLabel>Count the drawer</SectionLabel>
+      {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+      {flash && <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{flash}</p>}
+      {savedAt && !flash && (
+        <p className="mb-4 rounded-lg border border-line bg-subtle px-4 py-2.5 text-xs text-muted">
+          Saved by <strong className="text-ink">{savedAt.by}</strong> at {new Date(savedAt.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}. Saving again replaces it.
+        </p>
+      )}
 
-            {loading ? (
-              <Skeleton className="h-52 w-full" />
-            ) : (
-              <>
-                <div className="space-y-1.5 rounded-lg border border-line bg-subtle px-3.5 py-2.5 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted">Cash taken</span>
-                    <span className="tnum text-ink">{money(settlement?.byMethod.cash ?? 0)}</span>
+      {loading ? (
+        <p className="py-16 text-center text-sm text-muted">Working out the day&apos;s money…</p>
+      ) : (
+        <>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* Wholesale customers — typed by hand */}
+            <Panel title="Wholesale customers paid" hint="Type the amounts from your own record — entering them independently is what makes the check below meaningful. Names the portal saw are suggested underneath so nobody gets missed.">
+              <div className="space-y-2">
+                {sheet.customerLines.map((l, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input className={`${inp} flex-1`} placeholder="Customer name" value={l.name} onChange={(e) => setLine("customerLines", i, { name: e.target.value })} />
+                    <input type="number" step="0.01" min="0" inputMode="decimal" className={`${num} w-24`} placeholder="0.00" value={l.amount || ""} onChange={(e) => setLine("customerLines", i, { amount: Number(e.target.value) || 0 })} />
+                    <select className={`${num} w-28`} value={l.method} onChange={(e) => setLine("customerLines", i, { method: e.target.value })}>
+                      {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button onClick={() => removeLine("customerLines", i)} className="px-1 text-muted hover:text-red-600" title="Remove">✕</button>
                   </div>
-                  {(settlement?.cashExpenses ?? 0) > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted">− Cash expenses</span>
-                      <span className="tnum text-danger">
-                        −{money(settlement?.cashExpenses ?? 0)}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between border-t border-line pt-1.5 font-semibold">
-                    <span className="text-ink">Expected cash (before float)</span>
-                    <span className="tnum text-ink">{money(expectedCash)}</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Opening float" hint="Cash left in at open">
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      value={float}
-                      onChange={(e) => setFloat(e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </Field>
-                  <Field label="Counted cash" hint="What's in the drawer now">
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      value={counted}
-                      onChange={(e) => setCounted(e.target.value)}
-                      placeholder="0.00"
-                      autoFocus
-                    />
-                  </Field>
-                </div>
-
-                {variance !== null && (
-                  <Alert tone={varianceTone(variance)}>
-                    {variance === 0 ? (
-                      <span className="font-medium">Cash balances exactly. 🎯</span>
-                    ) : (
-                      <span>
-                        Cash is{" "}
-                        <strong>
-                          {variance < 0 ? "short" : "over"} by {money(Math.abs(variance))}
-                        </strong>{" "}
-                        (counted {money(Number(counted) || 0)} − float {money(Number(float) || 0)} −
-                        expected {money(expectedCash)}).
-                      </span>
-                    )}
-                  </Alert>
-                )}
-
-                <Field
-                  label="Counted card (optional)"
-                  hint={`Terminal expects ${money(expectedCard)}`}
-                >
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    value={countedCard}
-                    onChange={(e) => setCountedCard(e.target.value)}
-                    placeholder="0.00"
-                  />
-                </Field>
-
-                {cardVariance !== null && countedCard !== "" && (
-                  <Alert tone={varianceTone(cardVariance)}>
-                    {cardVariance === 0 ? (
-                      <span className="font-medium">Card matches the terminal.</span>
-                    ) : (
-                      <span>
-                        Card is{" "}
-                        <strong>
-                          {cardVariance < 0 ? "short" : "over"} by {money(Math.abs(cardVariance))}
-                        </strong>
-                        .
-                      </span>
-                    )}
-                  </Alert>
-                )}
-
-                <Field label="Note (optional)">
-                  <Input
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="e.g. £5 short, made up from petty cash"
-                  />
-                </Field>
-
-                <Button variant="primary" full loading={saving} onClick={save}>
-                  Record cash-up
-                </Button>
-              </>
-            )}
-          </div>
-        </Card>
-
-        {/* Who paid today (system breakdown) */}
-        <Card>
-          <div className="p-4 sm:p-5">
-            <SectionLabel>Who paid today</SectionLabel>
-            {loading ? (
-              <Skeleton className="mt-3 h-52 w-full" />
-            ) : (settlement?.accountLines.length ?? 0) === 0 &&
-              (settlement?.counterByMethod.total ?? 0) === 0 ? (
-              <p className="mt-2 text-sm text-muted">No payments taken today yet.</p>
-            ) : (
-              <ul className="mt-3 divide-y divide-line text-sm">
-                {settlement?.accountLines.map((l, i) => (
-                  <li key={i} className="flex items-center justify-between gap-3 py-2">
-                    <span className="min-w-0 truncate text-ink-2">
-                      {l.name}{" "}
-                      <span className="text-muted">· {METHOD_LABEL[l.method as Method] ?? l.method}</span>
-                    </span>
-                    <span className="tnum font-medium text-ink">{money(l.amount)}</span>
-                  </li>
                 ))}
-                {(settlement?.counterByMethod.total ?? 0) > 0 && (
-                  <li className="flex items-center justify-between gap-3 py-2">
-                    <span className="text-ink-2">
-                      Counter / walk-in{" "}
-                      <span className="text-muted">
-                        · cash {money(settlement?.counterByMethod.cash ?? 0)}, card{" "}
-                        {money(settlement?.counterByMethod.card ?? 0)}
-                      </span>
-                    </span>
-                    <span className="tnum font-medium text-ink">
-                      {money(settlement?.counterByMethod.total ?? 0)}
-                    </span>
-                  </li>
-                )}
-              </ul>
-            )}
-          </div>
-        </Card>
-      </div>
+              </div>
+              <button onClick={() => addLine("customerLines")} className="mt-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs font-medium text-muted hover:border-accent hover:text-accent">
+                + Add customer payment
+              </button>
 
-      {/* History */}
-      <Card>
-        <div className="p-4 sm:p-5">
-          <SectionLabel>Recent cash-ups</SectionLabel>
-          {loading ? (
-            <Skeleton className="mt-3 h-24 w-full" />
-          ) : history.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">No cash-ups recorded yet.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-line">
-              {history.map((h) => (
-                <li key={h.id} className="flex items-center justify-between gap-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-ink">
-                      {h.businessDay}{" "}
-                      <span className="font-normal text-muted">· {h.who || "—"}</span>
-                    </p>
-                    <p className="truncate text-xs text-muted">
-                      Counted {money(h.countedCash)} · expected {money(h.expectedCash)}
-                      {h.float ? ` + ${money(h.float)} float` : ""} · {dt(h.createdAt)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    {h.countedCard > 0 && (
-                      <Badge tone={varianceTone(h.cardVariance)}>
-                        card {h.cardVariance < 0 ? "−" : h.cardVariance > 0 ? "+" : ""}
-                        {money(Math.abs(h.cardVariance)).replace(/^[^0-9-]*/, "")}
-                      </Badge>
+              {suggestions.length > 0 && (
+                <div className="mt-4 rounded-xl border border-line bg-subtle p-3">
+                  <p className="text-xs font-medium text-ink">
+                    The portal also has {suggestions.length} customer payment{suggestions.length > 1 ? "s" : ""} today that {suggestions.length > 1 ? "aren't" : "isn't"} on your sheet
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-muted">Tap to copy the row in. Change the amount if your own record says different — a copied figure can&apos;t disagree with the portal, so the check below can&apos;t vouch for it.</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => addSuggestion(s)}
+                        title={`Add ${s.name} — ${gbp(s.amount)} ${s.method}`}
+                        className="rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink transition hover:border-accent hover:text-accent dark:bg-neutral-900"
+                      >
+                        + {s.name} <span className="text-muted">· {gbp(s.amount)} · {s.method}</span>
+                      </button>
+                    ))}
+                    {suggestions.length > 1 && (
+                      <button
+                        onClick={addAllSuggestions}
+                        className="rounded-full border border-accent px-2.5 py-1 text-xs font-semibold text-accent transition hover:bg-accent/10"
+                      >
+                        Add all {suggestions.length}
+                      </button>
                     )}
-                    <Badge tone={varianceTone(h.variance)}>
-                      {h.variance === 0
-                        ? "Balanced"
-                        : `${h.variance < 0 ? "−" : "+"}${money(Math.abs(h.variance)).replace(/^[^0-9-]*/, "")}`}
-                    </Badge>
                   </div>
-                </li>
-              ))}
-            </ul>
+                </div>
+              )}
+
+              <Total label="From customers" value={t.fromCustomers} />
+            </Panel>
+
+            {/* Other collected */}
+            <Panel title="Other collected" hint="Counter / mix sales that aren't against a customer account.">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-ink">Cash</span>
+                <input type="number" step="0.01" min="0" inputMode="decimal" className={inp} placeholder="0.00" value={sheet.otherCash || ""} onChange={(e) => set("otherCash", Number(e.target.value) || 0)} />
+              </label>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-sm font-medium text-ink">Card</span>
+                <input type="number" step="0.01" min="0" inputMode="decimal" className={inp} placeholder="0.00" value={sheet.otherCard || ""} onChange={(e) => set("otherCard", Number(e.target.value) || 0)} />
+              </label>
+              <Total label="From other" value={t.fromOther} />
+              <div className="mt-4 border-t border-line pt-3">
+                <Row label="All takings — cash" value={t.byMethod.cash} />
+                <Row label="All takings — card" value={t.byMethod.card} />
+                <Total label="Total received" value={t.receivedTotal} />
+              </div>
+            </Panel>
+          </div>
+
+          {/* Expenses — pre-filled, editable */}
+          <div className="mt-6">
+            <Panel title="Expenses" hint="Pre-filled from the Expenses page for this day. Edit, add or remove — only lines marked cash come out of the till.">
+              <div className="space-y-2">
+                {sheet.expenseLines.map((l, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input className={`${inp} flex-1`} placeholder="What was it for" value={l.name} onChange={(e) => setLine("expenseLines", i, { name: e.target.value })} />
+                    <input type="number" step="0.01" min="0" inputMode="decimal" className={`${num} w-24`} placeholder="0.00" value={l.amount || ""} onChange={(e) => setLine("expenseLines", i, { amount: Number(e.target.value) || 0 })} />
+                    <select className={`${num} w-32`} value={l.method} onChange={(e) => setLine("expenseLines", i, { method: e.target.value })}>
+                      {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button onClick={() => removeLine("expenseLines", i)} className="px-1 text-muted hover:text-red-600" title="Remove">✕</button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => addLine("expenseLines")} className="mt-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs font-medium text-muted hover:border-accent hover:text-accent">
+                + Add expense
+              </button>
+              <Row label="Total out" value={t.expensesTotal} />
+              <Total label="Out of the till (cash only)" value={t.cashExpenses} />
+            </Panel>
+          </div>
+
+          {/* Verify */}
+          {takings && (
+            <div className="mt-6 rounded-2xl border border-line bg-surface p-5">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Your sheet vs the portal</h2>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[480px] text-left text-sm">
+                  <thead className="text-xs uppercase text-muted">
+                    <tr><th className="py-2">&nbsp;</th><th className="py-2 text-right">Sheet</th><th className="py-2 text-right">Portal</th><th className="py-2 text-right">Difference</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {diffs.map((d) => {
+                      const gap = d.sheet - d.sys;
+                      const off = Math.abs(gap) >= 0.01;
+                      return (
+                        <tr key={d.label}>
+                          <td className="py-2 text-muted">{d.label}</td>
+                          <td className="py-2 text-right text-ink">{gbp(d.sheet)}</td>
+                          <td className="py-2 text-right text-ink">{gbp(d.sys)}</td>
+                          <td className={`py-2 text-right font-semibold ${off ? "text-red-600" : "text-emerald-600"}`}>{off ? gbp(gap) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${anyDrift ? "bg-red-500/10 text-red-600" : "bg-emerald-500/10 text-emerald-700"}`}>
+                {anyDrift
+                  ? "⚠ Your sheet and the portal disagree. Check today's invoices before closing — one side has a payment the other doesn't."
+                  : prefilled.size > 0
+                    ? "✓ Your sheet matches the portal — but see below, some of it was copied from it."
+                    : "✓ Your sheet matches the portal exactly."}
+              </p>
+              {/* Name-by-name, so the odd one out is a row you can point at
+                  rather than a total you have to hunt through. */}
+              {driftLines.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-xl border border-line">
+                  <div className="border-b border-line bg-subtle px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Where the difference is</p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-[11px] uppercase tracking-wide text-muted">
+                        <th className="px-3 py-1.5 text-left font-medium">Who</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Sheet</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Portal</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Difference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {driftLines.map((r, i) => (
+                        <tr key={i} className="border-t border-line">
+                          <td className="px-3 py-2">
+                            <span className="text-ink">{r.name}</span> <span className="text-xs text-muted">· {r.method}</span>
+                            <span className="ml-2 text-[11px] text-muted">
+                              {methodMixUps.has(r.name.toLowerCase())
+                                ? "method may be wrong"
+                                : r.diff < 0 ? "missing from your sheet" : "portal has no record of this"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted">{gbp(r.sheet)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted">{gbp(r.portal)}</td>
+                          <td className={`px-3 py-2 text-right font-semibold tabular-nums ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
+                            {r.diff > 0 ? "+" : "−"}{gbp(Math.abs(r.diff))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="border-t border-line bg-subtle px-3 py-2 text-[11px] text-muted">
+                    Negative = the portal has it and your sheet doesn&apos;t. Positive = you counted it but no invoice or payment backs it up.
+                  </p>
+                </div>
+              )}
+
+              {/* A copied figure agrees with the portal by construction. Saying so
+                  keeps a green tick from being read as more assurance than it is. */}
+              {prefilled.size > 0 && (
+                <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+                  {gbp(prefilledTotal)} across {prefilled.size} line{prefilled.size > 1 ? "s" : ""} was copied from the portal, not counted. This check only vouches for the {gbp(t.fromCustomers - prefilledTotal)} you typed. Overwrite an amount to make it count.
+                </p>
+              )}
+              {takings.accountLines.length > 0 && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs font-medium text-muted hover:text-ink">Portal says these customers paid ({takings.accountLines.length})</summary>
+                  <div className="mt-2 space-y-1">
+                    {takings.accountLines.map((l, i) => (
+                      <div key={i} className="flex justify-between text-sm">
+                        <span className="text-muted">{l.name} <span className="text-xs">· {l.method}</span></span>
+                        <span className="text-ink">{gbp(l.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
           )}
-        </div>
-      </Card>
+
+          {/* Close the drawer */}
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            <Panel title="Count the drawer">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-ink">Opening float</span>
+                <input type="number" step="0.01" min="0" inputMode="decimal" className={inp} placeholder="0.00" value={sheet.openingFloat || ""} onChange={(e) => set("openingFloat", Number(e.target.value) || 0)} />
+              </label>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-sm font-medium text-ink">Cash counted now</span>
+                <input type="number" step="0.01" min="0" inputMode="decimal" className={inp} placeholder="0.00" value={sheet.countedCash || ""} onChange={(e) => set("countedCash", Number(e.target.value) || 0)} />
+              </label>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-sm font-medium text-ink">Card terminal total <span className="font-normal text-muted">(optional)</span></span>
+                <input type="number" step="0.01" min="0" inputMode="decimal" className={inp} placeholder="0.00" value={sheet.countedCard || ""} onChange={(e) => set("countedCard", Number(e.target.value) || 0)} />
+              </label>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-sm font-medium text-ink">Note <span className="font-normal text-muted">(optional)</span></span>
+                <input className={inp} value={sheet.note} onChange={(e) => set("note", e.target.value)} placeholder="e.g. £5 short, paid supplier from till" />
+              </label>
+            </Panel>
+
+            <Panel title="What's left">
+              <Row label="Opening float" value={sheet.openingFloat} />
+              <Row label="+ Cash taken today" value={t.byMethod.cash} />
+              <Row label="− Cash expenses" value={-t.cashExpenses} />
+              <Total label="Expected in drawer" value={expectedCash} />
+              <div className={`mt-3 rounded-xl px-4 py-3 ${balanced ? "bg-emerald-500/10" : "bg-red-500/10"}`}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className={`text-sm font-medium ${balanced ? "text-emerald-700" : "text-red-600"}`}>Counted {gbp(sheet.countedCash)}</span>
+                  <span className={`text-lg font-bold ${balanced ? "text-emerald-700" : "text-red-600"}`}>
+                    {balanced ? "Balances" : `${variance > 0 ? "Over" : "Short"} ${gbp(Math.abs(variance))}`}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-3 border-t border-line pt-3">
+                <Row label="Card today" value={t.byMethod.card} />
+                <Row label="Takings today — cash + card" value={t.receivedTotal} />
+                {/* Takings exclude the float; this is what's physically in hand
+                    at close — the counted drawer plus the day's card. */}
+                <Total label="In hand now — counted cash + card" value={sheet.countedCash + t.byMethod.card} />
+              </div>
+            </Panel>
+          </div>
+
+          {/* Export & share */}
+          <div className="mt-6 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface p-5">
+            <span className="mr-2 text-sm font-semibold text-ink">Report</span>
+            <button onClick={downloadPdf} disabled={!!busy} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink hover:border-accent disabled:opacity-50">
+              {busy === "pdf" ? "…" : "📄 PDF"}
+            </button>
+            <button onClick={downloadExcel} disabled={!!busy} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink hover:border-accent disabled:opacity-50">
+              ⬇ Excel
+            </button>
+            <button onClick={shareWhatsApp} disabled={!!busy} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50">
+              {busy === "share" ? "…" : "📤 Send to group"}
+            </button>
+            <span className="text-xs text-muted">
+              Excel is built from the saved record — save first. Sending downloads the PDF and opens WhatsApp with the figures; attach the file in the chat.
+            </span>
+          </div>
+
+          {history.length > 0 && (
+            <div className="mt-8">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Recent cash-ups</h2>
+              <div className="overflow-x-auto rounded-2xl border border-line bg-surface">
+                <table className="w-full min-w-[620px] text-left text-sm">
+                  <thead className="border-b border-line bg-subtle text-xs uppercase text-muted">
+                    <tr><th className="px-4 py-3">Day</th><th className="px-4 py-3">Opening</th><th className="px-4 py-3">Counted</th><th className="px-4 py-3">By</th><th className="px-4 py-3">Note</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {history.slice(0, 30).map((c) => (
+                      <tr key={c.date} className="cursor-pointer hover:bg-subtle" onClick={() => { setDate(c.date); setLoading(true); }}>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">{dayLabel(c.date)}</td>
+                        <td className="px-4 py-3 text-muted">{gbp(c.openingFloat)}</td>
+                        <td className="px-4 py-3 font-medium text-ink">{gbp(c.countedCash)}</td>
+                        <td className="px-4 py-3 text-xs text-muted">{c.closedBy}</td>
+                        <td className="px-4 py-3 text-xs text-muted">{c.note || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Panel({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-5">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">{title}</h2>
+      {hint && <p className="mb-3 mt-1 text-xs text-muted">{hint}</p>}
+      <div className={hint ? "" : "mt-3"}>{children}</div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="text-muted">{label}</span>
+      <span className="text-ink">{gbp(value)}</span>
+    </div>
+  );
+}
+
+function Total({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="mt-2 flex items-center justify-between border-t border-line pt-2 text-base font-semibold text-ink">
+      <span>{label}</span>
+      <span>{gbp(value)}</span>
     </div>
   );
 }
