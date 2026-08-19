@@ -45,6 +45,38 @@ export default function CustomerDetailClient({ id }: { id: string }) {
   const [stmtSrc, setStmtSrc] = useState<string | null>(null);
   const [stFrom, setStFrom] = useState("");
   const [stTo, setStTo] = useState(new Date().toISOString().slice(0, 10));
+  const [sending, setSending] = useState("");
+
+  // Email/WhatsApp a document to the customer. `kind` picks the endpoint;
+  // period is passed through for statements when a range is set.
+  const sendDoc = async (
+    kind: "statement" | "today",
+    channel: "email" | "whatsapp",
+  ) => {
+    const tag = `${kind}-${channel}`;
+    setSending(tag);
+    try {
+      const body: Record<string, unknown> = { channel };
+      if (kind === "statement" && stFrom && stTo) {
+        body.from = stFrom;
+        body.to = stTo;
+      }
+      const res = await fetch(`/api/customers/${id}/${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "That did not send.");
+      toast.success(
+        `${kind === "today" ? "Today's summary" : "Statement"} sent by ${channel === "email" ? "email" : "WhatsApp"}.`,
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSending("");
+    }
+  };
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/customers/${id}`, { cache: "no-store" });
@@ -439,6 +471,65 @@ export default function CustomerDetailClient({ id }: { id: string }) {
                   Export full record (Excel)
                 </Button>
               </a>
+
+              {/* Send the statement straight to the customer. Uses the period
+                  above when both dates are set, otherwise the full history. */}
+              <div className="rounded-lg border border-line p-3">
+                <p className="mb-2 text-xs font-medium text-muted">
+                  Send statement to customer
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!customer.email || !!sending}
+                    loading={sending === "statement-email"}
+                    onClick={() => sendDoc("statement", "email")}
+                    title={customer.email ? undefined : "No email on file"}
+                  >
+                    Email
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!customer.phone || !!sending}
+                    loading={sending === "statement-whatsapp"}
+                    onClick={() => sendDoc("statement", "whatsapp")}
+                    title={customer.phone ? undefined : "No phone on file"}
+                  >
+                    WhatsApp
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Today's summary"
+              subtitle="Their itemised bills for today, with the balance."
+            />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!customer.email || !!sending}
+                loading={sending === "today-email"}
+                onClick={() => sendDoc("today", "email")}
+                title={customer.email ? undefined : "No email on file"}
+              >
+                Email
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!customer.phone || !!sending}
+                loading={sending === "today-whatsapp"}
+                onClick={() => sendDoc("today", "whatsapp")}
+                title={customer.phone ? undefined : "No phone on file"}
+              >
+                WhatsApp
+              </Button>
             </div>
           </Card>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { money } from "@/lib/business";
 import { SEGMENTS, type SegmentKey } from "@/lib/segments";
@@ -50,6 +50,8 @@ const COLUMNS: ColumnDef<ColKey>[] = [
 type TodayCust = {
   id: string | null;
   name: string;
+  email: string;
+  phone: string;
   hasAccount: boolean;
   dayTotal: number;
   dayPaid: number;
@@ -68,11 +70,66 @@ export default function CustomersClient() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [segment, setSegment] = useState("all");
+  const [sortBy, setSortBy] = useState<
+    "recent" | "name" | "company" | "invoices" | "billed" | "outstanding"
+  >("recent");
   const [addOpen, setAddOpen] = useState(false);
   const [todayCust, setTodayCust] = useState<TodayCust[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkSeg, setBulkSeg] = useState<SegmentKey>("shop");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [sendingToday, setSendingToday] = useState(false);
+
+  // Email + WhatsApp every registered customer billed today their own itemised
+  // summary. Walk-ins (no account) are skipped — there's nobody to send to.
+  const sendTodayInvoices = async () => {
+    const targets = todayCust.filter((c) => c.id && (c.email || c.phone));
+    if (targets.length === 0) {
+      toast.error("No customers with contact details were billed today.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Send ${targets.length} customer${targets.length === 1 ? "" : "s"} their itemised today's summary (email with PDF and/or WhatsApp)?`,
+      )
+    ) {
+      return;
+    }
+    setSendingToday(true);
+    let emails = 0;
+    let whats = 0;
+    let fails = 0;
+    for (const c of targets) {
+      if (c.email) {
+        try {
+          const r = await fetch(`/api/customers/${c.id}/today`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: "email" }),
+          });
+          r.ok ? emails++ : fails++;
+        } catch {
+          fails++;
+        }
+      }
+      if (c.phone) {
+        try {
+          const r = await fetch(`/api/customers/${c.id}/today`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: "whatsapp" }),
+          });
+          if (r.ok) whats++;
+        } catch {
+          /* WhatsApp is best-effort */
+        }
+      }
+    }
+    setSendingToday(false);
+    toast.success(
+      `Done — ${emails} email${emails === 1 ? "" : "s"}, ${whats} WhatsApp${whats === 1 ? "" : "s"}${fails ? `, ${fails} failed` : ""} across ${targets.length} customer${targets.length === 1 ? "" : "s"}.`,
+    );
+  };
 
   useEffect(() => {
     fetch("/api/reports/today-customers", { cache: "no-store" })
@@ -197,6 +254,28 @@ export default function CustomersClient() {
   const owedTotal = customers.reduce((s, c) => s + Math.max(c.outstanding, 0), 0);
   const billedTotal = customers.reduce((s, c) => s + c.totalBilled, 0);
 
+  // Client-side sort of whatever's been loaded. Search/segment still filter on
+  // the server; this only re-orders the rows in hand.
+  const sorted = useMemo(() => {
+    const rows = [...customers];
+    switch (sortBy) {
+      case "name":
+        return rows.sort((a, b) => a.name.localeCompare(b.name));
+      case "company":
+        return rows.sort((a, b) => (a.company || "").localeCompare(b.company || ""));
+      case "invoices":
+        return rows.sort((a, b) => b.invoiceCount - a.invoiceCount);
+      case "billed":
+        return rows.sort((a, b) => b.totalBilled - a.totalBilled);
+      case "outstanding":
+        return rows.sort((a, b) => b.outstanding - a.outstanding);
+      default: // recent — most recently added first
+        return rows.sort(
+          (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt),
+        );
+    }
+  }, [customers, sortBy]);
+
   return (
     <div>
       <PageHeader
@@ -207,9 +286,21 @@ export default function CustomersClient() {
             : `${total.toLocaleString()} account${total === 1 ? "" : "s"}${owedTotal > 0 ? ` · ${money(owedTotal)} owed` : ""}`
         }
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
-            Add customer
-          </Button>
+          <>
+            {todayCust.some((c) => c.id && (c.email || c.phone)) && (
+              <Button
+                variant="secondary"
+                loading={sendingToday}
+                onClick={sendTodayInvoices}
+                title="Email each customer their itemised today's bills (PDF) + WhatsApp summary"
+              >
+                Send today&apos;s invoices
+              </Button>
+            )}
+            <Button variant="primary" onClick={() => setAddOpen(true)}>
+              Add customer
+            </Button>
+          </>
         }
       />
 
@@ -285,6 +376,20 @@ export default function CustomersClient() {
             ...SEGMENTS.map((s) => ({ value: s.key, label: s.label })),
           ]}
         />
+        <Select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          className="h-9 w-auto"
+          aria-label="Sort customers"
+          title="Sort customers"
+        >
+          <option value="recent">Recently added</option>
+          <option value="outstanding">Most outstanding</option>
+          <option value="billed">Highest billed</option>
+          <option value="invoices">Most invoices</option>
+          <option value="name">Name A–Z</option>
+          <option value="company">Company A–Z</option>
+        </Select>
         <div className="ml-auto">
           <ColumnChooser
             defs={COLUMNS}
@@ -402,7 +507,7 @@ export default function CustomersClient() {
                   </td>
                 </tr>
               ) : (
-                customers.map((c) => (
+                sorted.map((c) => (
                   <tr
                     key={c.id}
                     className={cx(
@@ -527,6 +632,10 @@ function AddCustomerModal({
   const [company, setCompany] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [postcode, setPostcode] = useState("");
+  const [notes, setNotes] = useState("");
   const [opening, setOpening] = useState("");
   const [segments, setSegments] = useState<SegmentKey[]>(["shop"]);
   const [busy, setBusy] = useState(false);
@@ -537,6 +646,10 @@ function AddCustomerModal({
       setCompany("");
       setPhone("");
       setEmail("");
+      setAddress("");
+      setCity("");
+      setPostcode("");
+      setNotes("");
       setOpening("");
       setSegments(["shop"]);
     }
@@ -553,6 +666,10 @@ function AddCustomerModal({
           company,
           phone,
           email,
+          address,
+          city,
+          postcode,
+          notes,
           segments,
           openingBalance: Number(opening) || 0,
         }),
@@ -615,6 +732,21 @@ function AddCustomerModal({
             />
           </Field>
         </div>
+        <Field label="Address">
+          <Input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="Street address"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Town / city">
+            <Input value={city} onChange={(e) => setCity(e.target.value)} />
+          </Field>
+          <Field label="Postcode">
+            <Input value={postcode} onChange={(e) => setPostcode(e.target.value)} />
+          </Field>
+        </div>
         <Field
           label="Opening balance"
           hint="What they already owe you from before this system. Leave blank if nothing."
@@ -652,6 +784,13 @@ function AddCustomerModal({
               );
             })}
           </div>
+        </Field>
+        <Field label="Note">
+          <Input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Anything worth remembering about this account"
+          />
         </Field>
       </div>
     </Modal>
