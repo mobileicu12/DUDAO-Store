@@ -75,6 +75,14 @@ export default function TillClient({
   const [walkInName, setWalkInName] = useState("");
   const [walkInPhone, setWalkInPhone] = useState("");
 
+  // Running tab — a wholesale customer's still-open invoices from today that new
+  // items can be appended to instead of starting a fresh bill.
+  type OpenInvoice = { id: string; number: string; total: number; balance: number; issuedAt: string };
+  const [openInvoices, setOpenInvoices] = useState<OpenInvoice[]>([]);
+  const [addToInvoiceId, setAddToInvoiceId] = useState("");
+
+  const [scanCode, setScanCode] = useState("");
+
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<ProductRecord[]>([]);
   const [searching, setSearching] = useState(false);
@@ -91,6 +99,51 @@ export default function TillClient({
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
+
+  // Arriving from a customer page ("Bill this customer") pre-selects the account.
+  useEffect(() => {
+    const cid = new URLSearchParams(window.location.search).get("customer");
+    if (!cid) return;
+    fetch(`/api/customers/${cid}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: CustomerSummary | null) => {
+        if (c && c.id) setCustomer(c);
+      })
+      .catch(() => {});
+  }, []);
+
+  // A wholesale customer's open invoices from today — the running tab. Loaded
+  // whenever the selected account or the mode changes; cleared for POS.
+  useEffect(() => {
+    if (mode !== "wholesale" || !customer) {
+      setOpenInvoices([]);
+      setAddToInvoiceId("");
+      return;
+    }
+    let alive = true;
+    fetch(`/api/customers/${customer.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: { invoices?: { id: string; number: string; status: string; issuedAt: string; total: number; balance: number }[] } | null) => {
+        if (!alive || !c?.invoices) return;
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        setOpenInvoices(
+          c.invoices
+            .filter(
+              (i) =>
+                i.status !== "PAID" &&
+                i.status !== "VOID" &&
+                new Date(i.issuedAt) >= startOfToday,
+            )
+            .map((i) => ({ id: i.id, number: i.number, total: i.total, balance: i.balance, issuedAt: i.issuedAt })),
+        );
+        setAddToInvoiceId("");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [customer, mode]);
 
   /* ---------------------------------------------------------------------- */
   /* Search                                                                  */
@@ -332,6 +385,51 @@ export default function TillClient({
 
   const empty = lines.length === 0;
 
+  const clearBill = () => {
+    setLines([]);
+    setDiscount("");
+    setReceived("");
+    setNotes("");
+    setCustomer(null);
+    setWalkInName("");
+    setWalkInPhone("");
+    setAddToInvoiceId("");
+  };
+
+  // Running tab — append the cart onto an existing draft invoice rather than
+  // raising a new one. Same-product lines merge by quantity; custom lines append.
+  const addToOpenInvoice = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/billing/${encodeURIComponent(addToInvoiceId)}`, { cache: "no-store" });
+      const inv = await res.json();
+      if (!res.ok) throw new Error(inv.error ?? "Couldn't open that invoice.");
+
+      const merged = (inv.lines as { productId: string | null; title: string; sku: string; quantity: number; unitPrice: number }[]).map(
+        (l) => ({ productId: l.productId, title: l.title, sku: l.sku, quantity: l.quantity, unitPrice: Number(l.unitPrice) }),
+      );
+      for (const nl of lines) {
+        const hit = nl.productId ? merged.find((m) => m.productId === nl.productId) : null;
+        if (hit) hit.quantity += nl.quantity;
+        else merged.push({ productId: nl.productId, title: nl.title, sku: nl.sku, quantity: nl.quantity, unitPrice: nl.unitPrice });
+      }
+
+      const upRes = await fetch(`/api/billing/${encodeURIComponent(addToInvoiceId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines: merged, customerId: customer?.id ?? null, taxable, discount: discountAmt, notes, segment }),
+      });
+      const upd = await upRes.json();
+      if (!upRes.ok) throw new Error(upd.error ?? "Couldn't add to the open invoice.");
+      setDone({ id: upd.id, number: upd.number });
+      clearBill();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Inline submit — no modal. POS completes immediately with the chosen method;
   // a wholesale invoice is a draft, optionally with money received on account.
   const submit = async () => {
@@ -349,6 +447,11 @@ export default function TillClient({
         toast.error(
           "Wholesale is for Online / Registered customers. Set this customer's segment to Online, or use POS.",
         );
+        return;
+      }
+      // Running tab: fold these items into the chosen open invoice.
+      if (addToInvoiceId) {
+        await addToOpenInvoice();
         return;
       }
     }
@@ -410,6 +513,26 @@ export default function TillClient({
       {/* Left: search + cart                                              */}
       {/* ---------------------------------------------------------------- */}
       <div className="min-w-0">
+        {/* Barcode bar — a USB / Bluetooth scanner types the code here and sends
+            Enter, so a whole sale can be rung up without a mouse. The camera
+            scanner lives in the search box for phones. */}
+        <div className="mb-2">
+          <Input
+            value={scanCode}
+            onChange={(e) => setScanCode(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                const code = scanCode.trim();
+                if (code) void handleScan(code);
+                setScanCode("");
+              }
+            }}
+            placeholder="Scan a barcode  ▏▎▍  (or type a code and press Enter)"
+            aria-label="Scan barcode"
+            className="h-10 font-mono text-sm"
+          />
+        </div>
         <div className="mb-3 flex gap-2">
           <div className="relative min-w-0 flex-1">
             <Input
@@ -669,6 +792,29 @@ export default function TillClient({
                 Trade pricing applied to this bill.
               </p>
             )}
+
+            {/* Running tab — append to a draft invoice from earlier today. */}
+            {mode === "wholesale" && customer && openInvoices.length > 0 && (
+              <div className="mt-3 rounded-lg border border-info/40 bg-info-subtle/60 p-2.5">
+                <p className="mb-1.5 text-xs font-medium text-ink-2">
+                  {openInvoices.length} open invoice{openInvoices.length === 1 ? "" : "s"} from today —
+                  add to a running tab, or start a new one.
+                </p>
+                <Select
+                  value={addToInvoiceId}
+                  onChange={(e) => setAddToInvoiceId(e.target.value)}
+                  aria-label="Add to an open invoice"
+                >
+                  <option value="">➕ Create a new invoice</option>
+                  {openInvoices.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.number} · {money(i.total, currency)}
+                      {i.balance > 0.001 ? ` (${money(i.balance, currency)} due)` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -825,12 +971,16 @@ export default function TillClient({
           >
             {mode === "pos"
               ? `Charge ${money(totals.total, currency)} & complete`
-              : "Create invoice"}
+              : addToInvoiceId
+                ? `Add ${money(totals.total, currency)} to open invoice`
+                : "Create invoice"}
           </Button>
           <p className="mt-2 text-xs text-faint">
             {mode === "pos"
               ? "Completes the sale immediately and deducts stock."
-              : "Creates a draft invoice you can send or take payment on later."}
+              : addToInvoiceId
+                ? "Adds these items to the chosen invoice from today."
+                : "Creates a draft invoice you can send or take payment on later."}
           </p>
         </Card>
       </div>
