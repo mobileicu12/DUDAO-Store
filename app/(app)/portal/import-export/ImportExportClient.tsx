@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { ImportSummary } from "@/lib/excel";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ImportSummary, ImportBatchInfo } from "@/lib/excel";
 import {
   Alert,
   Badge,
@@ -21,6 +21,16 @@ export default function ImportExportClient() {
   const [uploading, setUploading] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [fileName, setFileName] = useState("");
+  const [batches, setBatches] = useState<ImportBatchInfo[]>([]);
+  const [undoing, setUndoing] = useState("");
+
+  const loadBatches = useCallback(() => {
+    fetch("/api/import", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { batches: [] }))
+      .then((d: { batches: ImportBatchInfo[] }) => setBatches(d.batches ?? []))
+      .catch(() => {});
+  }, []);
+  useEffect(() => loadBatches(), [loadBatches]);
 
   const upload = async (file: File) => {
     setUploading(true);
@@ -48,11 +58,41 @@ export default function ImportExportClient() {
           "Your catalog is up to date.",
         );
       }
+      loadBatches();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const undo = async (batchId: string, label: string) => {
+    if (
+      !window.confirm(
+        `Undo "${label}"? This deletes the products it created and restores the ones it changed to how they were before. This cannot itself be undone.`,
+      )
+    )
+      return;
+    setUndoing(batchId);
+    try {
+      const res = await fetch("/api/import/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batchId }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "That import was not undone.");
+      toast.success(
+        `Import undone.`,
+        `${d.deleted} created products removed, ${d.restored} restored.`,
+      );
+      if (summary?.batchId === batchId) setSummary(null);
+      loadBatches();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setUndoing("");
     }
   };
 
@@ -127,9 +167,21 @@ export default function ImportExportClient() {
 
       {summary && (
         <div className="mt-6">
-          <h2 className="mb-3 text-sm font-semibold text-ink">
-            Import result{fileName && ` — ${fileName}`}
-          </h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-ink">
+              Import result{fileName && ` — ${fileName}`}
+            </h2>
+            {summary.batchId && (summary.created > 0 || summary.updated > 0) && (
+              <Button
+                variant="danger"
+                size="sm"
+                loading={undoing === summary.batchId}
+                onClick={() => undo(summary.batchId!, fileName || "this import")}
+              >
+                Undo this import
+              </Button>
+            )}
+          </div>
 
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatCard label="Created" value={summary.created} tone="success" />
@@ -205,6 +257,70 @@ export default function ImportExportClient() {
                         </Badge>
                       </td>
                       <td className="px-3 py-2 text-muted">{r.error ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {batches.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-1 text-sm font-semibold text-ink">Recent imports</h2>
+          <p className="mb-3 text-sm text-muted">
+            Undo a whole import if a sheet turns out wrong — it deletes the products
+            that import created and restores the ones it changed to how they were.
+          </p>
+          <Card padded={false} className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[40rem] border-collapse text-sm">
+                <thead className="border-b border-line bg-subtle">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">When</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">File</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">Result</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-ink-2">By</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-ink-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batches.map((b) => (
+                    <tr key={b.id} className="border-b border-line last:border-0">
+                      <td className="whitespace-nowrap px-3 py-2 text-muted">
+                        {new Date(b.createdAt).toLocaleString("en-GB", {
+                          day: "2-digit",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="block max-w-[14rem] truncate text-ink">
+                          {b.fileName || "—"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted">
+                        <span className="text-success">{b.created} created</span> ·{" "}
+                        <span className="text-info">{b.updated} updated</span>
+                        {b.failed > 0 && <> · <span className="text-danger">{b.failed} failed</span></>}
+                      </td>
+                      <td className="px-3 py-2 text-muted">{b.who || "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        {b.undone ? (
+                          <Badge tone="neutral">Undone</Badge>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            loading={undoing === b.id}
+                            onClick={() => undo(b.id, b.fileName || "this import")}
+                          >
+                            Undo
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

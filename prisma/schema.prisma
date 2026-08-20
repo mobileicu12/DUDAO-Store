@@ -442,3 +442,21 @@ model Attendance {
 
   @@index([email, tapIn])
 }
+
+/// A bulk catalog import, kept so the whole batch can be undone if a sheet
+/// turns out to be wrong. `snapshot` holds the ids created (to delete on undo)
+/// and the prior state of every product updated (to restore on undo).
+model ImportBatch {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  who       String   @default("")
+  fileName  String   @default("")
+  created   Int      @default(0)
+  updated   Int      @default(0)
+  failed    Int      @default(0)
+  snapshot  Json
+  undone    Boolean  @default(false)
+  undoneAt  DateTime?
+
+  @@index([createdAt])
+}

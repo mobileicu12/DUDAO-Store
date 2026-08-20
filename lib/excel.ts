@@ -135,6 +135,16 @@ export type ImportSummary = {
   failed: number;
   skipped: number;
   results: ImportRowResult[];
+  /** The batch this import was recorded as, so it can be undone. */
+  batchId?: string;
+};
+
+/** A prior product state captured before an import touched it, for undo. */
+type UpdatedSnapshot = {
+  id: string;
+  data: Record<string, unknown>;
+  images: { url: string; position: number }[];
+  collectionIds: string[];
 };
 
 const cellString = (value: ExcelJS.CellValue): string => {
@@ -160,7 +170,10 @@ const cellNumber = (value: ExcelJS.CellValue): number | null => {
  * a single malformed row must not abort a 2,000-row import and leave the
  * catalog half-updated with no way to tell where it stopped.
  */
-export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
+export async function importCatalog(
+  buffer: Buffer,
+  meta: { who: string; fileName: string } = { who: "", fileName: "" },
+): Promise<ImportSummary> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
@@ -430,6 +443,48 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
     for (const row of rows) idByHandle.set(row.handle, row.id);
   }
 
+  /* -- Snapshot the prior state of everything about to be updated, so the
+        whole import can be undone. Captured before Phase 6/7 mutate a thing. */
+  const updatedBefore: UpdatedSnapshot[] = [];
+  if (toUpdate.length) {
+    const ids = toUpdate.map((u) => u.id);
+    for (const part of chunk(ids, 500)) {
+      const rows = await db.product.findMany({
+        where: { id: { in: part } },
+        include: {
+          images: { orderBy: { position: "asc" } },
+          collections: { select: { collectionId: true } },
+        },
+      });
+      for (const r of rows) {
+        updatedBefore.push({
+          id: r.id,
+          data: {
+            title: r.title,
+            descriptionHtml: r.descriptionHtml,
+            brand: r.brand,
+            model: r.model,
+            productType: r.productType,
+            vendor: r.vendor,
+            tags: r.tags,
+            sku: r.sku,
+            barcode: r.barcode,
+            price: Number(r.price),
+            compareAtPrice: r.compareAtPrice === null ? null : Number(r.compareAtPrice),
+            priceWholesale: r.priceWholesale === null ? null : Number(r.priceWholesale),
+            priceShop: r.priceShop === null ? null : Number(r.priceShop),
+            priceEbay: r.priceEbay === null ? null : Number(r.priceEbay),
+            priceAmazon: r.priceAmazon === null ? null : Number(r.priceAmazon),
+            stock: r.stock,
+            status: r.status,
+          },
+          images: r.images.map((im) => ({ url: im.url, position: im.position })),
+          collectionIds: r.collections.map((c) => c.collectionId),
+        });
+      }
+    }
+  }
+
   /* -- Phase 6: updates (bounded concurrency, per-row isolation) --------- */
   await mapPool(toUpdate, 15, async (u) => {
     try {
@@ -493,5 +548,131 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
   }
 
   results.sort((a, b) => a.row - b.row);
-  return { created, updated, failed, skipped, results };
+
+  // Record the batch so it can be undone. Created products are deleted on undo;
+  // updated products are restored to the snapshot above. Only worth keeping when
+  // the import actually changed something.
+  let batchId: string | undefined;
+  if (created > 0 || updated > 0) {
+    const createdIds = toCreate
+      .filter((c) => !c.failed)
+      .map((c) => idByHandle.get(c.handle))
+      .filter((v): v is string => Boolean(v));
+    const batch = await db.importBatch.create({
+      data: {
+        who: meta.who,
+        fileName: meta.fileName,
+        created,
+        updated,
+        failed,
+        snapshot: { createdIds, updated: updatedBefore } as unknown as object,
+      },
+      select: { id: true },
+    });
+    batchId = batch.id;
+  }
+
+  return { created, updated, failed, skipped, results, batchId };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Undo                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export type ImportBatchInfo = {
+  id: string;
+  createdAt: string;
+  who: string;
+  fileName: string;
+  created: number;
+  updated: number;
+  failed: number;
+  undone: boolean;
+  undoneAt: string | null;
+};
+
+/** Recent import batches, newest first, for the "undo" list. */
+export async function listImportBatches(limit = 15): Promise<ImportBatchInfo[]> {
+  const rows = await db.importBatch.findMany({
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Math.max(limit, 1), 50),
+  });
+  return rows.map((b) => ({
+    id: b.id,
+    createdAt: b.createdAt.toISOString(),
+    who: b.who,
+    fileName: b.fileName,
+    created: b.created,
+    updated: b.updated,
+    failed: b.failed,
+    undone: b.undone,
+    undoneAt: b.undoneAt?.toISOString() ?? null,
+  }));
+}
+
+export type UndoResult = { deleted: number; restored: number };
+
+/**
+ * Reverse a whole import: delete the products it created and restore the ones
+ * it changed to exactly how they were before. Safe to run once — the batch is
+ * marked undone so it can't be applied twice.
+ *
+ * Deleting a created product cascades its images and collection links and nulls
+ * it on any invoice line (the line keeps its own snapshot of title and price),
+ * so an undo never damages billing history.
+ */
+export async function undoImport(batchId: string): Promise<UndoResult> {
+  const batch = await db.importBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new Error("That import could not be found.");
+  if (batch.undone) throw new Error("This import has already been undone.");
+
+  const snap = batch.snapshot as unknown as {
+    createdIds?: string[];
+    updated?: UpdatedSnapshot[];
+  };
+  const createdIds = snap.createdIds ?? [];
+  const updated = snap.updated ?? [];
+
+  let deleted = 0;
+  let restored = 0;
+
+  await db.$transaction(
+    async (tx) => {
+      // Delete the products this import created.
+      for (let i = 0; i < createdIds.length; i += 500) {
+        const part = createdIds.slice(i, i + 500);
+        const res = await tx.product.deleteMany({ where: { id: { in: part } } });
+        deleted += res.count;
+      }
+
+      // Restore the products it updated to their prior state.
+      for (const u of updated) {
+        const exists = await tx.product.findUnique({ where: { id: u.id }, select: { id: true } });
+        if (!exists) continue; // deleted since the import — nothing to restore
+        await tx.product.update({ where: { id: u.id }, data: u.data });
+        await tx.productImage.deleteMany({ where: { productId: u.id } });
+        if (u.images.length) {
+          await tx.productImage.createMany({
+            data: u.images.map((im) => ({ productId: u.id, url: im.url, position: im.position })),
+          });
+        }
+        await tx.collectionProduct.deleteMany({ where: { productId: u.id } });
+        if (u.collectionIds.length) {
+          await tx.collectionProduct.createMany({
+            data: u.collectionIds.map((cid) => ({ productId: u.id, collectionId: cid })),
+            skipDuplicates: true,
+          });
+        }
+        restored++;
+      }
+
+      await tx.importBatch.update({
+        where: { id: batchId },
+        data: { undone: true, undoneAt: new Date() },
+      });
+    },
+    { timeout: 120_000, maxWait: 20_000 },
+  );
+
+  return { deleted, restored };
 }
