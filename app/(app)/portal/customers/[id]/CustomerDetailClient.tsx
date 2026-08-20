@@ -14,6 +14,8 @@ import {
 } from "@/lib/billing-shared";
 import { SEGMENTS, type SegmentKey } from "@/lib/segments";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
+import FinanceRequestButton from "@/components/FinanceRequestButton";
+import { useCanSeeFinance } from "@/lib/use-me";
 import type { CustomerDetail } from "@/lib/customers";
 import {
   Alert,
@@ -65,6 +67,7 @@ function periodRange(key: string, from: string, to: string): { from: string; to:
 export default function CustomerDetailClient({ id }: { id: string }) {
   const toast = useToast();
   const router = useRouter();
+  const canSeeFinance = useCanSeeFinance();
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -371,10 +374,16 @@ export default function CustomerDetailClient({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Stats ------------------------------------------------------------ */}
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Total billed" value={gbp(c.totalBilled)} />
-        <Stat label="Total paid" value={gbp(c.totalPaid)} tone="success" />
+      {/* Stats — billed / paid are finance-gated, as in the reference. ----- */}
+      {!canSeeFinance && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-subtle px-4 py-2.5">
+          <span className="text-xs text-muted">This customer&apos;s billed / paid totals are hidden.</span>
+          <FinanceRequestButton />
+        </div>
+      )}
+      <div className={cx("mt-6 grid grid-cols-2 gap-4", canSeeFinance ? "lg:grid-cols-4" : "lg:grid-cols-2")}>
+        {canSeeFinance && <Stat label="Total billed" value={gbp(c.openingBalance + c.totalBilled)} />}
+        {canSeeFinance && <Stat label="Total paid" value={gbp(c.totalPaid)} tone="success" />}
         <Stat
           label={outstanding < -0.001 ? "Account credit" : "Outstanding"}
           value={gbp(Math.abs(outstanding))}
