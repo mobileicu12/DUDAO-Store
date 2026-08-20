@@ -49,7 +49,10 @@ export default async function PortalLayout({ children }: { children: ReactNode }
   return (
     <ToastProvider>
       <FaviconManager />
-      <div className="flex h-dvh overflow-hidden bg-bg">
+      {/* Fixed to the viewport (not just h-dvh in flow) so the shell can never
+          be pushed taller than the screen and scroll as one block — only the
+          content column below scrolls. */}
+      <div className="fixed inset-0 flex overflow-hidden bg-bg">
         <Sidebar />
 
         <div className="flex min-w-0 flex-1 flex-col">
