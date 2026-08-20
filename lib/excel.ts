@@ -59,6 +59,7 @@ export async function exportCatalog(): Promise<Buffer> {
       model: p.model,
       productType: p.productType,
       vendor: p.vendor,
+      description: p.descriptionHtml,
       tags: p.tags.join(", "),
       sku: p.sku,
       barcode: p.barcode,
@@ -91,6 +92,7 @@ export async function exportTemplate(): Promise<Buffer> {
     model: "iPhone 12",
     productType: "Parts",
     vendor: "Your supplier",
+    description: "Genuine replacement LCD assembly. Plain text or simple HTML.",
     tags: "screens, lcd",
     sku: "SCR-IP12",
     barcode: "5012345678900",
@@ -229,6 +231,7 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
 
   type ProductData = {
     title: string;
+    descriptionHtml: string;
     brand: string;
     model: string;
     productType: string;
@@ -287,6 +290,7 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
       handleGiven,
       data: {
         title,
+        descriptionHtml: cellString(get(row, "description")),
         brand: cellString(get(row, "brand")),
         model: cellString(get(row, "model")),
         productType: cellString(get(row, "productType")),
@@ -466,6 +470,17 @@ export async function importCatalog(buffer: Buffer): Promise<ImportSummary> {
     }
   }
 
+  // Collections are authoritative when the column is present: a product ends up
+  // in exactly the collections its row lists — no more, no less — so exporting,
+  // editing and re-importing moves products between collections and re-importing
+  // an unchanged file changes nothing. Without the column, links are left alone
+  // (a partial sheet must not silently un-file everything).
+  if (columnIndex.has("collections")) {
+    const pids = withProductId.map((w) => w.productId);
+    for (const part of chunk(pids, 500)) {
+      await db.collectionProduct.deleteMany({ where: { productId: { in: part } } });
+    }
+  }
   const links: { collectionId: string; productId: string }[] = [];
   for (const w of withProductId) {
     for (const name of w.p.collectionNames) {

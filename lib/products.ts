@@ -562,6 +562,7 @@ export const EXPORT_COLUMNS = [
   { key: "model", header: "Model", width: 22 },
   { key: "productType", header: "Type", width: 20 },
   { key: "vendor", header: "Vendor", width: 18 },
+  { key: "description", header: "Description", width: 50 },
   { key: "tags", header: "Tags", width: 26 },
   { key: "sku", header: "SKU", width: 18 },
   { key: "barcode", header: "Barcode", width: 18 },
