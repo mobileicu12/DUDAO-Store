@@ -36,10 +36,11 @@ export async function POST(req: Request) {
       throw invalid("That file is over 25MB. Split it into smaller sheets.");
     }
 
+    const dryRun = form.get("dryRun") === "1";
     const who = await currentActor();
     const buffer = Buffer.from(await file.arrayBuffer());
-    const summary = await importCatalog(buffer, { who, fileName: file.name });
-    if (summary.batchId) {
+    const summary = await importCatalog(buffer, { who, fileName: file.name }, { dryRun });
+    if (!dryRun && summary.batchId) {
       await audit("catalog.import", {
         ref: summary.batchId,
         name: file.name,

@@ -127,6 +127,8 @@ export type ImportRowResult = {
   ok: boolean;
   action: "created" | "updated" | "skipped" | "failed";
   error?: string;
+  /** On a preview, the fields that would change on an updated row. */
+  changes?: string[];
 };
 
 export type ImportSummary = {
@@ -137,6 +139,8 @@ export type ImportSummary = {
   results: ImportRowResult[];
   /** The batch this import was recorded as, so it can be undone. */
   batchId?: string;
+  /** True when this was a preview — nothing was written. */
+  dryRun?: boolean;
 };
 
 /** A prior product state captured before an import touched it, for undo. */
@@ -173,6 +177,7 @@ const cellNumber = (value: ExcelJS.CellValue): number | null => {
 export async function importCatalog(
   buffer: Buffer,
   meta: { who: string; fileName: string } = { who: "", fileName: "" },
+  opts: { dryRun?: boolean } = {},
 ): Promise<ImportSummary> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
@@ -378,6 +383,64 @@ export async function importCatalog(
     } else {
       toCreate.push({ p, handle: freshHandle(p.title) });
     }
+  }
+
+  /* -- Preview: report the plan without writing anything ----------------- */
+  if (opts.dryRun) {
+    // Diff each update against its current row so staff see exactly what a
+    // handle-matched row would change before committing.
+    const currentById = new Map<string, Record<string, unknown>>();
+    if (toUpdate.length) {
+      const ids = toUpdate.map((u) => u.id);
+      for (const part of chunk(ids, 500)) {
+        const rows = await db.product.findMany({ where: { id: { in: part } } });
+        for (const r of rows) currentById.set(r.id, r as unknown as Record<string, unknown>);
+      }
+    }
+    const fmt = (v: unknown): string => {
+      if (v === null || v === undefined || v === "") return "—";
+      if (Array.isArray(v)) return v.join(", ") || "—";
+      return String(v);
+    };
+    const FIELDS: [keyof ProductData, string][] = [
+      ["title", "title"], ["price", "price"], ["priceWholesale", "wholesale"],
+      ["priceShop", "shop"], ["priceEbay", "eBay"], ["priceAmazon", "amazon"],
+      ["compareAtPrice", "compare-at"], ["stock", "stock"], ["status", "status"],
+      ["sku", "SKU"], ["barcode", "barcode"], ["brand", "brand"], ["model", "model"],
+      ["productType", "type"], ["vendor", "vendor"], ["tags", "tags"],
+      ["descriptionHtml", "description"],
+    ];
+    for (const u of toUpdate) {
+      const cur = currentById.get(u.id) ?? {};
+      const changes: string[] = [];
+      for (const [key, label] of FIELDS) {
+        const next = u.p.data[key];
+        let prev = cur[key as string];
+        // Decimals arrive as objects/strings from the DB — normalise to number.
+        if (typeof next === "number" && prev != null) prev = Number(prev);
+        const a = Array.isArray(next) ? next.join(",") : fmt(prev);
+        const b = Array.isArray(next) ? next.join(",") : fmt(next);
+        const same = Array.isArray(next)
+          ? (Array.isArray(prev) ? prev.join(",") : "") === b
+          : a === b;
+        if (!same) changes.push(`${label} ${a}→${b}`);
+      }
+      results.push({
+        row: u.p.row,
+        title: u.p.title,
+        ok: true,
+        action: changes.length ? "updated" : "skipped",
+        changes: changes.length ? changes : undefined,
+      });
+      if (changes.length) updated++;
+      else skipped++;
+    }
+    for (const c of toCreate) {
+      results.push({ row: c.p.row, title: c.p.title, ok: true, action: "created" });
+      created++;
+    }
+    results.sort((a, b) => a.row - b.row);
+    return { created, updated, failed, skipped, results, dryRun: true };
   }
 
   /* -- Phase 4: pre-create any missing collections (batched) ------------- */

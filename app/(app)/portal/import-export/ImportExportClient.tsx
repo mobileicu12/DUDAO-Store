@@ -21,6 +21,7 @@ export default function ImportExportClient() {
   const [uploading, setUploading] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [fileName, setFileName] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [batches, setBatches] = useState<ImportBatchInfo[]>([]);
   const [undoing, setUndoing] = useState("");
 
@@ -32,7 +33,8 @@ export default function ImportExportClient() {
   }, []);
   useEffect(() => loadBatches(), [loadBatches]);
 
-  const upload = async (file: File) => {
+  // A pick previews first (dryRun) — nothing is written until "Apply" is pressed.
+  const upload = async (file: File, dryRun: boolean) => {
     setUploading(true);
     setSummary(null);
     setFileName(file.name);
@@ -40,31 +42,43 @@ export default function ImportExportClient() {
     try {
       const form = new FormData();
       form.append("file", file);
+      if (dryRun) form.append("dryRun", "1");
 
       const res = await fetch("/api/import", { method: "POST", body: form });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "That import did not run.");
 
-      setSummary(body as ImportSummary);
       const s = body as ImportSummary;
-      if (s.failed > 0) {
-        toast.info(
-          `${s.created + s.updated} rows applied, ${s.failed} failed.`,
-          "The failures are listed below with the reason.",
-        );
+      setSummary(s);
+      if (dryRun) {
+        setPendingFile(file);
       } else {
-        toast.success(
-          `${s.created} created, ${s.updated} updated.`,
-          "Your catalog is up to date.",
-        );
+        setPendingFile(null);
+        if (s.failed > 0) {
+          toast.info(
+            `${s.created + s.updated} rows applied, ${s.failed} failed.`,
+            "The failures are listed below with the reason.",
+          );
+        } else {
+          toast.success(
+            `${s.created} created, ${s.updated} updated.`,
+            "Your catalog is up to date.",
+          );
+        }
+        loadBatches();
       }
-      loadBatches();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  };
+
+  const cancelPreview = () => {
+    setPendingFile(null);
+    setSummary(null);
+    setFileName("");
   };
 
   const undo = async (batchId: string, label: string) => {
@@ -140,8 +154,8 @@ export default function ImportExportClient() {
             subtitle="Rows with a handle update; rows without create."
           />
           <p className="mt-2 text-sm text-muted">
-            A bad row fails on its own and tells you why — the rest of the sheet
-            still goes in.
+            You&apos;ll see a preview of exactly what would change first — nothing
+            is written until you press Apply.
           </p>
           <input
             ref={fileRef}
@@ -150,7 +164,7 @@ export default function ImportExportClient() {
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) void upload(file);
+              if (file) void upload(file, true);
             }}
           />
           <Button
@@ -160,7 +174,7 @@ export default function ImportExportClient() {
             loading={uploading}
             onClick={() => fileRef.current?.click()}
           >
-            {uploading ? "Importing…" : "Choose a file"}
+            {uploading ? "Working…" : "Choose a file"}
           </Button>
         </Card>
       </div>
@@ -169,25 +183,54 @@ export default function ImportExportClient() {
         <div className="mt-6">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">
-              Import result{fileName && ` — ${fileName}`}
+              {summary.dryRun ? "Preview" : "Import result"}
+              {fileName && ` — ${fileName}`}
             </h2>
-            {summary.batchId && (summary.created > 0 || summary.updated > 0) && (
-              <Button
-                variant="danger"
-                size="sm"
-                loading={undoing === summary.batchId}
-                onClick={() => undo(summary.batchId!, fileName || "this import")}
-              >
-                Undo this import
-              </Button>
+            {summary.dryRun ? (
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={cancelPreview} disabled={uploading}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={uploading}
+                  disabled={!pendingFile || (summary.created === 0 && summary.updated === 0)}
+                  onClick={() => pendingFile && upload(pendingFile, false)}
+                >
+                  Apply import
+                </Button>
+              </div>
+            ) : (
+              summary.batchId &&
+              (summary.created > 0 || summary.updated > 0) && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={undoing === summary.batchId}
+                  onClick={() => undo(summary.batchId!, fileName || "this import")}
+                >
+                  Undo this import
+                </Button>
+              )
             )}
           </div>
 
+          {summary.dryRun && (
+            <div className="mb-4">
+              <Alert tone="info" title="Nothing has been written yet">
+                This is a preview of what the sheet would do. Check the rows below,
+                then press <strong>Apply import</strong> to commit — or Cancel to
+                pick a different sheet.
+              </Alert>
+            </div>
+          )}
+
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Created" value={summary.created} tone="success" />
-            <StatCard label="Updated" value={summary.updated} tone="info" />
+            <StatCard label={summary.dryRun ? "Will create" : "Created"} value={summary.created} tone="success" />
+            <StatCard label={summary.dryRun ? "Will change" : "Updated"} value={summary.updated} tone="info" />
             <StatCard
-              label="Failed"
+              label={summary.dryRun ? "Will fail" : "Failed"}
               value={summary.failed}
               tone={summary.failed > 0 ? "danger" : "neutral"}
             />
@@ -256,7 +299,22 @@ export default function ImportExportClient() {
                           {r.action}
                         </Badge>
                       </td>
-                      <td className="px-3 py-2 text-muted">{r.error ?? "—"}</td>
+                      <td className="px-3 py-2 text-muted">
+                        {r.changes && r.changes.length ? (
+                          <span className="flex flex-wrap gap-1">
+                            {r.changes.map((ch, i) => (
+                              <span
+                                key={i}
+                                className="tnum rounded bg-info-subtle px-1.5 py-0.5 text-[0.7rem] text-info"
+                              >
+                                {ch}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          r.error ?? "—"
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
