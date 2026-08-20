@@ -46,10 +46,10 @@ export async function audit(
     who?: string;
     data?: unknown;
   } = {},
-): Promise<void> {
+): Promise<string | null> {
   try {
     const who = info.who || (await currentActor());
-    await db.auditLog.create({
+    const row = await db.auditLog.create({
       data: {
         who,
         action,
@@ -61,9 +61,12 @@ export async function audit(
             ? undefined
             : (info.data as Prisma.InputJsonValue),
       },
+      select: { id: true },
     });
+    return row.id;
   } catch {
     /* deliberately swallowed — see above */
+    return null;
   }
 }
 

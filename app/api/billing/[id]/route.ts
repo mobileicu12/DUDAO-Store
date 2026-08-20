@@ -56,8 +56,9 @@ export async function DELETE(_req: Request, { params }: Ctx) {
     const { id } = await params;
     const removed = await deleteInvoice(id);
     // The full snapshot goes into the audit entry so the invoice can be
-    // restored from the Activity log — a hard delete is otherwise irreversible.
-    await audit("invoice.delete", {
+    // restored from the Activity log — or undone straight away from the list via
+    // the returned auditId.
+    const auditId = await audit("invoice.delete", {
       ref: id,
       name: removed.number,
       detail: `Deleted — total £${removed.total.toFixed(2)}${
@@ -65,7 +66,7 @@ export async function DELETE(_req: Request, { params }: Ctx) {
       }`,
       data: removed.snapshot,
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, auditId, number: removed.number });
   } catch (err) {
     return errorResponse(err, "delete this invoice");
   }
