@@ -24,6 +24,19 @@ export default function ImportExportClient() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [batches, setBatches] = useState<ImportBatchInfo[]>([]);
   const [undoing, setUndoing] = useState("");
+  // Optional: drop every product in the uploaded sheet into this collection
+  // (existing name from the list, or a new one that gets created on import).
+  const [assignCollection, setAssignCollection] = useState("");
+  const [collectionNames, setCollectionNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/collections", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { collections?: { title: string }[] } | null) => {
+        if (d?.collections) setCollectionNames(d.collections.map((c) => c.title).filter(Boolean));
+      })
+      .catch(() => {});
+  }, []);
 
   const loadBatches = useCallback(() => {
     fetch("/api/import", { cache: "no-store" })
@@ -43,6 +56,7 @@ export default function ImportExportClient() {
       const form = new FormData();
       form.append("file", file);
       if (dryRun) form.append("dryRun", "1");
+      if (assignCollection.trim()) form.append("assignCollection", assignCollection.trim());
 
       const res = await fetch("/api/import", { method: "POST", body: form });
       const body = await res.json();
@@ -157,6 +171,35 @@ export default function ImportExportClient() {
             You&apos;ll see a preview of exactly what would change first — nothing
             is written until you press Apply.
           </p>
+
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-medium text-ink-2">
+              Put every product in this sheet into a collection{" "}
+              <span className="font-normal text-muted">(optional)</span>
+            </span>
+            <input
+              list="import-collections"
+              value={assignCollection}
+              onChange={(e) => setAssignCollection(e.target.value)}
+              placeholder="Pick an existing collection or type a new name"
+              className="h-9 w-full rounded-md border border-line-strong bg-surface px-3 text-sm text-ink outline-none focus:border-accent"
+            />
+            <datalist id="import-collections">
+              {collectionNames.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+            {assignCollection.trim() && (
+              <span className="mt-1 block text-[11px] text-muted">
+                {collectionNames.some(
+                  (n) => n.toLowerCase() === assignCollection.trim().toLowerCase(),
+                )
+                  ? `All imported products will be added to “${assignCollection.trim()}”.`
+                  : `A new collection “${assignCollection.trim()}” will be created and all imported products added to it.`}
+              </span>
+            )}
+          </label>
+
           <input
             ref={fileRef}
             type="file"
@@ -170,7 +213,7 @@ export default function ImportExportClient() {
           <Button
             variant="primary"
             full
-            className="mt-4"
+            className="mt-3"
             loading={uploading}
             onClick={() => fileRef.current?.click()}
           >

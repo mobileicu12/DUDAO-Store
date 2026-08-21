@@ -177,8 +177,12 @@ const cellNumber = (value: ExcelJS.CellValue): number | null => {
 export async function importCatalog(
   buffer: Buffer,
   meta: { who: string; fileName: string } = { who: "", fileName: "" },
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; assignCollection?: string } = {},
 ): Promise<ImportSummary> {
+  // A collection to drop every product in this sheet into, chosen at import
+  // time. Added on top of whatever the Collections column says, and created if
+  // it doesn't exist yet.
+  const assignCollection = opts.assignCollection?.trim() || "";
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
@@ -334,6 +338,16 @@ export async function importCatalog(
         .map((c) => c.trim())
         .filter(Boolean),
     });
+  }
+
+  // Fold the chosen collection into every row, so the whole sheet lands in it
+  // regardless of what the Collections column says (or whether it's even there).
+  if (assignCollection) {
+    for (const p of parsed) {
+      if (!p.collectionNames.some((n) => n.toLowerCase() === assignCollection.toLowerCase())) {
+        p.collectionNames.push(assignCollection);
+      }
+    }
   }
 
   /* -- Phase 2: resolve update targets and handle uniqueness (2 queries) -- */

@@ -37,9 +37,14 @@ export async function POST(req: Request) {
     }
 
     const dryRun = form.get("dryRun") === "1";
+    const assignCollection = (form.get("assignCollection") as string | null)?.trim() || "";
     const who = await currentActor();
     const buffer = Buffer.from(await file.arrayBuffer());
-    const summary = await importCatalog(buffer, { who, fileName: file.name }, { dryRun });
+    const summary = await importCatalog(
+      buffer,
+      { who, fileName: file.name },
+      { dryRun, assignCollection },
+    );
     if (!dryRun && summary.batchId) {
       await audit("catalog.import", {
         ref: summary.batchId,
