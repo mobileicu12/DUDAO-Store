@@ -29,6 +29,7 @@ import {
   Skeleton,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
+import { Pagination } from "@/components/ui/Pagination";
 import { useToast } from "@/components/ui/Toast";
 
 type ColKey =
@@ -68,11 +69,11 @@ export default function InventoryClient() {
   const toast = useToast();
 
   const [products, setProducts] = useState<ProductRecord[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [threshold, setThreshold] = useState(5);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -115,7 +116,7 @@ export default function InventoryClient() {
   const fetchPage = useCallback(
     async (nextCursor: string | null) => {
       const params = new URLSearchParams({
-        limit: "50",
+        limit: "200",
         sort: sortParam,
         dir: sort.dir,
         stock: stockFilter,
@@ -140,41 +141,40 @@ export default function InventoryClient() {
     [debounced, sortParam, sort.dir, stockFilter],
   );
 
+  // Load every matching row (following the cursor to the end) so the pager can
+  // page across the whole catalog.
+  const loadAll = useCallback(async () => {
+    const all: ProductRecord[] = [];
+    let cur: string | null = null;
+    let thr = 5;
+    let tot = 0;
+    for (let i = 0; i < 200; i++) {
+      const data = await fetchPage(cur);
+      all.push(...data.products);
+      thr = data.threshold;
+      tot = data.total;
+      if (!data.nextCursor) break;
+      cur = data.nextCursor;
+    }
+    setProducts(all);
+    setTotal(tot);
+    setThreshold(thr);
+    setSelected(new Set());
+  }, [fetchPage]);
+
   // Reload from the top whenever the query changes.
   useEffect(() => {
     let alive = true;
     setLoading(true);
-
-    fetchPage(null)
-      .then((data) => {
-        if (!alive) return;
-        setProducts(data.products);
-        setCursor(data.nextCursor);
-        setTotal(data.total);
-        setThreshold(data.threshold);
-        setSelected(new Set());
-      })
+    setPage(1);
+    loadAll()
       .catch((err: Error) => alive && toast.error(err.message))
       .finally(() => alive && setLoading(false));
 
     return () => {
       alive = false;
     };
-  }, [fetchPage, toast]);
-
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const data = await fetchPage(cursor);
-      setProducts((prev) => [...prev, ...data.products]);
-      setCursor(data.nextCursor);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  }, [loadAll, toast]);
 
   /* ---------------------------------------------------------------------- */
   /* Inline editing                                                          */
@@ -245,11 +245,7 @@ export default function InventoryClient() {
 
       // Re-read rather than patching locally: a bulk delete or archive changes
       // which rows belong on screen at all.
-      const data = await fetchPage(null);
-      setProducts(data.products);
-      setCursor(data.nextCursor);
-      setTotal(data.total);
-      setSelected(new Set());
+      await loadAll();
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -285,6 +281,11 @@ export default function InventoryClient() {
     });
     setLabelOpen(false);
   };
+
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return products.slice(start, start + pageSize);
+  }, [products, page, pageSize]);
 
   const allSelected = products.length > 0 && selected.size === products.length;
   const someSelected = selected.size > 0 && !allSelected;
@@ -431,7 +432,7 @@ export default function InventoryClient() {
                   </td>
                 </tr>
               ) : (
-                products.map((p) => {
+                pageRows.map((p) => {
                   const isSelected = selected.has(p.id);
                   return (
                     <tr
@@ -559,16 +560,14 @@ export default function InventoryClient() {
           </table>
         </div>
 
-        {cursor && (
-          <div className="border-t border-line p-3 text-center">
-            <Button
-              variant="secondary"
-              onClick={loadMore}
-              loading={loadingMore}
-            >
-              Load more
-            </Button>
-          </div>
+        {!loading && products.length > 0 && (
+          <Pagination
+            total={products.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </div>
 

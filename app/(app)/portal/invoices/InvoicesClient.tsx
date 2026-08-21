@@ -18,6 +18,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
+import { Pagination } from "@/components/ui/Pagination";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
 
 type Summary = { count: number; billed: number; paid: number; outstanding: number };
@@ -59,12 +60,12 @@ export default function InvoicesClient() {
   const canSeeFinance = useCanSeeFinance();
 
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -168,7 +169,7 @@ export default function InvoicesClient() {
 
   const fetchPage = useCallback(
     async (nextCursor: string | null) => {
-      const params = new URLSearchParams({ limit: "50", status, segment });
+      const params = new URLSearchParams({ limit: "200", status, segment });
       if (debounced.trim()) params.set("q", debounced.trim());
       if (from) params.set("from", from);
       if (to) params.set("to", to);
@@ -188,18 +189,32 @@ export default function InvoicesClient() {
     [debounced, status, segment, from, to],
   );
 
+  // Load every matching row so the pager can page across the whole set (the API
+  // paginates by cursor; we follow it to the end, with a safety cap).
   const reload = useCallback(() => {
     let alive = true;
     setLoading(true);
     setSelected(new Set());
-    fetchPage(null)
-      .then((d) => {
+    setPage(1);
+    (async () => {
+      const all: InvoiceRecord[] = [];
+      let cur: string | null = null;
+      let sum: Summary | null = null;
+      let tot = 0;
+      for (let i = 0; i < 200; i++) {
+        const d = await fetchPage(cur);
         if (!alive) return;
-        setInvoices(d.invoices);
-        setCursor(d.nextCursor);
-        setTotal(d.total);
-        setSummary(d.summary);
-      })
+        all.push(...d.invoices);
+        sum = d.summary;
+        tot = d.total;
+        if (!d.nextCursor) break;
+        cur = d.nextCursor;
+      }
+      if (!alive) return;
+      setInvoices(all);
+      setTotal(tot);
+      setSummary(sum);
+    })()
       .catch((e: Error) => alive && toast.error(e.message))
       .finally(() => alive && setLoading(false));
     return () => {
@@ -208,20 +223,6 @@ export default function InvoicesClient() {
   }, [fetchPage, toast]);
 
   useEffect(() => reload(), [reload]);
-
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const d = await fetchPage(cursor);
-      setInvoices((prev) => [...prev, ...d.invoices]);
-      setCursor(d.nextCursor);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
 
   // Staff filter runs over the loaded rows — the API paginates by date, so this
   // narrows what's on screen.
@@ -249,6 +250,13 @@ export default function InvoicesClient() {
       return String(av).localeCompare(String(bv)) * dir;
     });
   }, [invoices, staff, sortKey, sortDir]);
+
+  // Reset to the first page whenever the filtered/sorted set changes underfoot.
+  useEffect(() => setPage(1), [staff, sortKey, sortDir]);
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, page, pageSize]);
 
   const csvFor = (list: InvoiceRecord[]) => {
     const data = [
@@ -567,7 +575,7 @@ export default function InvoicesClient() {
                   </td>
                 </tr>
               ) : (
-                rows.map((i) => {
+                pageRows.map((i) => {
                   const seg = segmentDef(i.segment);
                   return (
                     <tr key={i.id} className="border-b border-line transition-colors last:border-0 hover:bg-subtle/60">
@@ -651,12 +659,14 @@ export default function InvoicesClient() {
           </table>
         </div>
 
-        {cursor && (
-          <div className="border-t border-line p-3 text-center">
-            <Button variant="secondary" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          </div>
+        {!loading && rows.length > 0 && (
+          <Pagination
+            total={rows.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </div>
 

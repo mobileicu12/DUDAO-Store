@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { money } from "@/lib/business";
 import { tierNum } from "@/lib/pricing";
@@ -14,6 +14,7 @@ import {
   PageHeader,
   Skeleton,
 } from "@/components/ui/primitives";
+import { Pagination } from "@/components/ui/Pagination";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -24,12 +25,12 @@ import { useToast } from "@/components/ui/Toast";
 export default function TillItemsClient() {
   const toast = useToast();
   const [rows, setRows] = useState<ProductRecord[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 300);
@@ -38,7 +39,7 @@ export default function TillItemsClient() {
 
   const fetchPage = useCallback(
     async (next: string | null) => {
-      const params = new URLSearchParams({ limit: "50", status: "all" });
+      const params = new URLSearchParams({ limit: "200", status: "all" });
       if (debounced.trim()) params.set("q", debounced.trim());
       if (next) params.set("cursor", next);
       const res = await fetch(`/api/products?${params}`, { cache: "no-store" });
@@ -53,34 +54,38 @@ export default function TillItemsClient() {
   );
 
   const reload = useCallback(() => {
+    let alive = true;
     setLoading(true);
-    fetchPage(null)
-      .then((d) => {
-        setRows(d.products);
-        setCursor(d.nextCursor);
-        setTotal(d.total);
-      })
-      .catch((e: Error) => toast.error(e.message))
-      .finally(() => setLoading(false));
+    setPage(1);
+    (async () => {
+      const all: ProductRecord[] = [];
+      let cur: string | null = null;
+      let tot = 0;
+      for (let i = 0; i < 200; i++) {
+        const d = await fetchPage(cur);
+        if (!alive) return;
+        all.push(...d.products);
+        tot = d.total;
+        if (!d.nextCursor) break;
+        cur = d.nextCursor;
+      }
+      if (!alive) return;
+      setRows(all);
+      setTotal(tot);
+    })()
+      .catch((e: Error) => alive && toast.error(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
   }, [fetchPage, toast]);
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  useEffect(() => reload(), [reload]);
 
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const d = await fetchPage(cursor);
-      setRows((prev) => [...prev, ...d.products]);
-      setCursor(d.nextCursor);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, page, pageSize]);
 
   const shopPrice = (p: ProductRecord) => tierNum(p.tiers?.shop) ?? p.price;
   const wholesalePrice = (p: ProductRecord) => tierNum(p.tiers?.wholesale) ?? p.price;
@@ -147,7 +152,7 @@ export default function TillItemsClient() {
                   </td>
                 </tr>
               ) : (
-                rows.map((p) => (
+                pageRows.map((p) => (
                   <tr
                     key={p.id}
                     className="border-b border-line transition-colors last:border-0 hover:bg-subtle/60"
@@ -192,12 +197,14 @@ export default function TillItemsClient() {
           </table>
         </div>
 
-        {cursor && (
-          <div className="border-t border-line p-3 text-center">
-            <Button variant="secondary" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          </div>
+        {!loading && rows.length > 0 && (
+          <Pagination
+            total={rows.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </Card>
     </div>
