@@ -80,6 +80,47 @@ export default function InvoicesClient() {
   const [preview, setPreview] = useState<InvoiceRecord | null>(null);
   const reportsRef = useRef<HTMLDivElement>(null);
 
+  // Client-side sort of the loaded rows (the API paginates by date).
+  const [sortKey, setSortKey] = useState<
+    "number" | "customer" | "segment" | "staff" | "status" | "date" | "total"
+  >("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const onSort = (k: typeof sortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(k === "date" || k === "total" ? "desc" : "asc");
+    }
+  };
+  const arrow = (k: typeof sortKey) => (sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "");
+
+  // Just-deleted invoices, kept so the delete can be undone from a banner
+  // (restores from the audit snapshot, same as the Activity log).
+  const [deleted, setDeleted] = useState<{ auditId: string; number: string }[]>([]);
+  const [undoing, setUndoing] = useState(false);
+
+  const undoDelete = async () => {
+    if (deleted.length === 0) return;
+    setUndoing(true);
+    let ok = 0;
+    for (const d of deleted) {
+      try {
+        const res = await fetch("/api/logs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "restore", id: d.auditId }),
+        });
+        if (res.ok) ok++;
+      } catch {
+        /* keep going */
+      }
+    }
+    setUndoing(false);
+    setDeleted([]);
+    toast.success(`Restored ${ok} invoice${ok === 1 ? "" : "s"}.`);
+    reload();
+  };
+
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 300);
     return () => clearTimeout(t);
@@ -178,10 +219,26 @@ export default function InvoicesClient() {
     () => Array.from(new Set(invoices.map((i) => i.staffName).filter(Boolean))).sort(),
     [invoices],
   );
-  const rows = useMemo(
-    () => (staff === "all" ? invoices : invoices.filter((i) => i.staffName === staff)),
-    [invoices, staff],
-  );
+  const rows = useMemo(() => {
+    const base = staff === "all" ? invoices : invoices.filter((i) => i.staffName === staff);
+    const dir = sortDir === "asc" ? 1 : -1;
+    const val = (i: InvoiceRecord): string | number => {
+      switch (sortKey) {
+        case "number": return i.number;
+        case "customer": return (i.customer?.name || i.walkInName || "").toLowerCase();
+        case "segment": return i.segment;
+        case "staff": return i.staffName || "";
+        case "status": return statusView(i.status, i.totals.paid, i.totals.balance).label;
+        case "total": return i.totals.total;
+        default: return +new Date(i.issuedAt);
+      }
+    };
+    return [...base].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [invoices, staff, sortKey, sortDir]);
 
   const csvFor = (list: InvoiceRecord[]) => {
     const data = [
@@ -247,11 +304,21 @@ export default function InvoicesClient() {
   const bulkDelete = async () => {
     const ids = [...selected];
     if (ids.length === 0) return;
-    if (!window.confirm(`Delete ${ids.length} invoice${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete ${ids.length} invoice${ids.length === 1 ? "" : "s"}? You can undo this straight after.`)) return;
     setBusy(true);
     try {
-      await Promise.all(ids.map((id) => fetch(`/api/billing/${id}`, { method: "DELETE" })));
-      toast.success(`Deleted ${ids.length}.`);
+      const undoable: { auditId: string; number: string }[] = [];
+      await Promise.all(
+        ids.map(async (id) => {
+          const res = await fetch(`/api/billing/${id}`, { method: "DELETE" });
+          if (res.ok) {
+            const d = (await res.json().catch(() => ({}))) as { auditId?: string; number?: string };
+            if (d.auditId) undoable.push({ auditId: d.auditId, number: d.number ?? "" });
+          }
+        }),
+      );
+      setDeleted(undoable);
+      toast.success(`Deleted ${ids.length}.`, "Use Undo below to restore.");
       reload();
     } catch {
       toast.error("Some invoices could not be deleted.");
@@ -265,6 +332,25 @@ export default function InvoicesClient() {
 
   return (
     <div>
+      {deleted.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-accent/40 bg-accent-subtle px-4 py-3">
+          <span className="text-sm text-ink">
+            {deleted.length === 1
+              ? `Invoice ${deleted[0].number || ""} deleted.`
+              : `${deleted.length} invoices deleted.`}
+          </span>
+          <Button size="sm" loading={undoing} onClick={undoDelete}>
+            ↩ Undo
+          </Button>
+          <button
+            type="button"
+            onClick={() => setDeleted([])}
+            className="ml-auto text-xs font-medium text-muted hover:text-ink"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <PageHeader
         title="Invoices"
         subtitle="Bills & invoices created from the portal. Click a row to edit."
@@ -436,13 +522,14 @@ export default function InvoicesClient() {
             <thead className="border-b border-line bg-subtle">
               <tr className="text-left text-xs font-semibold text-ink-2">
                 <th className="w-10 px-3 py-2.5" />
-                <th className="px-3 py-2.5">Invoice</th>
-                <th className="px-3 py-2.5">Customer</th>
-                <th className="px-3 py-2.5">Source</th>
-                <th className="px-3 py-2.5">Staff</th>
-                <th className="px-3 py-2.5">Status</th>
-                <th className="px-3 py-2.5">Date</th>
-                <th className="px-3 py-2.5 text-right">Total</th>
+                <SortTh label="Invoice" k="number" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <SortTh label="Customer" k="customer" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <SortTh label="Source" k="segment" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <SortTh label="Staff" k="staff" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <SortTh label="Status" k="status" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <SortTh label="Date" k="date" sortKey={sortKey} arrow={arrow} onSort={onSort} />
+                <th className="px-3 py-2.5">Paid on</th>
+                <SortTh label="Total" k="total" sortKey={sortKey} arrow={arrow} onSort={onSort} align="right" />
                 <th className="px-3 py-2.5 text-right">Export</th>
               </tr>
             </thead>
@@ -450,14 +537,14 @@ export default function InvoicesClient() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b border-line last:border-0">
-                    <td colSpan={9} className="px-3 py-3">
+                    <td colSpan={10} className="px-3 py-3">
                       <Skeleton className="h-5 w-full" />
                     </td>
                   </tr>
                 ))
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     <EmptyState
                       title="No invoices here"
                       message="Nothing matches these filters yet. Take a sale at the till and it will appear."
@@ -518,6 +605,15 @@ export default function InvoicesClient() {
                       <td className="px-3 py-2.5 text-muted">
                         {new Date(i.issuedAt).toLocaleDateString("en-GB")}
                       </td>
+                      <td className="px-3 py-2.5 text-muted">
+                        {i.paidAt ? (
+                          new Date(i.paidAt).toLocaleDateString("en-GB")
+                        ) : i.totals.paid > 0.001 ? (
+                          <span className="text-warning">part-paid</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="tnum px-3 py-2.5 text-right text-ink">{money(i.totals.total)}</td>
                       <td className="px-3 py-2.5">
                         <div className="flex justify-end gap-1.5">
@@ -564,5 +660,37 @@ export default function InvoicesClient() {
         />
       )}
     </div>
+  );
+}
+
+function SortTh<K extends string>({
+  label,
+  k,
+  sortKey,
+  arrow,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  k: K;
+  sortKey: K;
+  arrow: (k: K) => string;
+  onSort: (k: K) => void;
+  align?: "left" | "right";
+}) {
+  return (
+    <th className={cx("px-3 py-2.5", align === "right" && "text-right")}>
+      <button
+        type="button"
+        onClick={() => onSort(k)}
+        className={cx(
+          "font-semibold uppercase tracking-wide transition-colors hover:text-ink",
+          sortKey === k ? "text-ink" : "text-ink-2",
+        )}
+      >
+        {label}
+        <span className="text-accent">{arrow(k)}</span>
+      </button>
+    </th>
   );
 }
