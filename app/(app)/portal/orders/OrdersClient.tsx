@@ -17,6 +17,7 @@ import {
   Skeleton,
   type Tone,
 } from "@/components/ui/primitives";
+import { Pagination } from "@/components/ui/Pagination";
 import { useToast } from "@/components/ui/Toast";
 
 /**
@@ -37,13 +38,13 @@ const STATUS_TONE: Record<InvoiceStatus, Tone> = {
 export default function OrdersClient() {
   const toast = useToast();
   const [orders, setOrders] = useState<InvoiceRecord[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [segment, setSegment] = useState("all");
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 300);
@@ -52,7 +53,7 @@ export default function OrdersClient() {
 
   const fetchPage = useCallback(
     async (next: string | null) => {
-      const params = new URLSearchParams({ limit: "50", status: "PAID", segment });
+      const params = new URLSearchParams({ limit: "200", status: "PAID", segment });
       if (debounced.trim()) params.set("q", debounced.trim());
       if (next) params.set("cursor", next);
       const res = await fetch(`/api/billing?${params}`, { cache: "no-store" });
@@ -69,13 +70,23 @@ export default function OrdersClient() {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    fetchPage(null)
-      .then((d) => {
+    setPage(1);
+    (async () => {
+      const all: InvoiceRecord[] = [];
+      let cur: string | null = null;
+      let tot = 0;
+      for (let i = 0; i < 200; i++) {
+        const d = await fetchPage(cur);
         if (!alive) return;
-        setOrders(d.invoices);
-        setCursor(d.nextCursor);
-        setTotal(d.total);
-      })
+        all.push(...d.invoices);
+        tot = d.total;
+        if (!d.nextCursor) break;
+        cur = d.nextCursor;
+      }
+      if (!alive) return;
+      setOrders(all);
+      setTotal(tot);
+    })()
       .catch((e: Error) => alive && toast.error(e.message))
       .finally(() => alive && setLoading(false));
     return () => {
@@ -83,19 +94,7 @@ export default function OrdersClient() {
     };
   }, [fetchPage, toast]);
 
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const d = await fetchPage(cursor);
-      setOrders((prev) => [...prev, ...d.invoices]);
-      setCursor(d.nextCursor);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  const pageRows = orders.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div>
@@ -168,7 +167,7 @@ export default function OrdersClient() {
                   </td>
                 </tr>
               ) : (
-                orders.map((o) => {
+                pageRows.map((o) => {
                   const seg = segmentDef(o.segment);
                   return (
                     <tr
@@ -216,12 +215,14 @@ export default function OrdersClient() {
             </tbody>
           </table>
         </div>
-        {cursor && (
-          <div className="border-t border-line p-3 text-center">
-            <Button variant="secondary" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          </div>
+        {!loading && orders.length > 0 && (
+          <Pagination
+            total={orders.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </div>
     </div>

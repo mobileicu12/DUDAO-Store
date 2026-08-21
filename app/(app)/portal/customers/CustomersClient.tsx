@@ -25,6 +25,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
+import { Pagination } from "@/components/ui/Pagination";
 import { PhoneField } from "@/components/ui/PhoneField";
 import { useToast } from "@/components/ui/Toast";
 
@@ -62,10 +63,10 @@ export default function CustomersClient() {
   const toast = useToast();
 
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -149,7 +150,7 @@ export default function CustomersClient() {
 
   const fetchPage = useCallback(
     async (next: string | null) => {
-      const params = new URLSearchParams({ limit: "50", segment });
+      const params = new URLSearchParams({ limit: "200", segment });
       if (debounced.trim()) params.set("q", debounced.trim());
       if (next) params.set("cursor", next);
 
@@ -168,34 +169,33 @@ export default function CustomersClient() {
   );
 
   const reload = useCallback(() => {
+    let alive = true;
     setLoading(true);
-    fetchPage(null)
-      .then((d) => {
-        setCustomers(d.customers);
-        setCursor(d.nextCursor);
-        setTotal(d.total);
-      })
-      .catch((e: Error) => toast.error(e.message))
-      .finally(() => setLoading(false));
+    setPage(1);
+    (async () => {
+      const all: CustomerSummary[] = [];
+      let cur: string | null = null;
+      let tot = 0;
+      for (let i = 0; i < 200; i++) {
+        const d = await fetchPage(cur);
+        if (!alive) return;
+        all.push(...d.customers);
+        tot = d.total;
+        if (!d.nextCursor) break;
+        cur = d.nextCursor;
+      }
+      if (!alive) return;
+      setCustomers(all);
+      setTotal(tot);
+    })()
+      .catch((e: Error) => alive && toast.error(e.message))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
   }, [fetchPage, toast]);
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
-
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const d = await fetchPage(cursor);
-      setCustomers((prev) => [...prev, ...d.customers]);
-      setCursor(d.nextCursor);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  useEffect(() => reload(), [reload]);
 
   const allSelected = customers.length > 0 && customers.every((c) => selected.has(c.id));
   const toggleOne = (id: string) =>
@@ -275,6 +275,12 @@ export default function CustomersClient() {
         );
     }
   }, [customers, sortBy]);
+
+  useEffect(() => setPage(1), [sortBy]);
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, page, pageSize]);
 
   return (
     <div>
@@ -507,7 +513,7 @@ export default function CustomersClient() {
                   </td>
                 </tr>
               ) : (
-                sorted.map((c) => (
+                pageRows.map((c) => (
                   <tr
                     key={c.id}
                     className={cx(
@@ -597,12 +603,14 @@ export default function CustomersClient() {
           </table>
         </div>
 
-        {cursor && (
-          <div className="border-t border-line p-3 text-center">
-            <Button variant="secondary" loading={loadingMore} onClick={loadMore}>
-              Load more
-            </Button>
-          </div>
+        {!loading && sorted.length > 0 && (
+          <Pagination
+            total={sorted.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </div>
 
