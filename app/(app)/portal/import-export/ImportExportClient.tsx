@@ -9,7 +9,9 @@ import {
   Card,
   CardHeader,
   cx,
+  Input,
   PageHeader,
+  Select,
   StatCard,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
@@ -24,10 +26,13 @@ export default function ImportExportClient() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [batches, setBatches] = useState<ImportBatchInfo[]>([]);
   const [undoing, setUndoing] = useState("");
-  // Optional: drop every product in the uploaded sheet into this collection
-  // (existing name from the list, or a new one that gets created on import).
-  const [assignCollection, setAssignCollection] = useState("");
+  // Optional: drop every product in the uploaded sheet into a collection —
+  // pick an existing one, or "__new__" to create one named below.
+  const [collectionChoice, setCollectionChoice] = useState("");
+  const [newCollection, setNewCollection] = useState("");
   const [collectionNames, setCollectionNames] = useState<string[]>([]);
+  const assignCollection =
+    collectionChoice === "__new__" ? newCollection.trim() : collectionChoice;
 
   useEffect(() => {
     fetch("/api/collections", { cache: "no-store" })
@@ -172,33 +177,42 @@ export default function ImportExportClient() {
             is written until you press Apply.
           </p>
 
-          <label className="mt-3 block">
+          <div className="mt-3">
             <span className="mb-1 block text-xs font-medium text-ink-2">
-              Put every product in this sheet into a collection{" "}
+              Add all these products to a collection{" "}
               <span className="font-normal text-muted">(optional)</span>
             </span>
-            <input
-              list="import-collections"
-              value={assignCollection}
-              onChange={(e) => setAssignCollection(e.target.value)}
-              placeholder="Pick an existing collection or type a new name"
-              className="h-9 w-full rounded-md border border-line-strong bg-surface px-3 text-sm text-ink outline-none focus:border-accent"
-            />
-            <datalist id="import-collections">
+            <Select
+              value={collectionChoice}
+              onChange={(e) => setCollectionChoice(e.target.value)}
+              className="h-9 w-full"
+              aria-label="Collection to add imported products to"
+            >
+              <option value="">— Don&apos;t add to a collection —</option>
               {collectionNames.map((n) => (
-                <option key={n} value={n} />
+                <option key={n} value={n}>
+                  {n}
+                </option>
               ))}
-            </datalist>
-            {assignCollection.trim() && (
+              <option value="__new__">➕ Create a new collection…</option>
+            </Select>
+            {collectionChoice === "__new__" && (
+              <Input
+                value={newCollection}
+                onChange={(e) => setNewCollection(e.target.value)}
+                placeholder="New collection name"
+                className="mt-2 h-9 w-full"
+                autoFocus
+              />
+            )}
+            {assignCollection && (
               <span className="mt-1 block text-[11px] text-muted">
-                {collectionNames.some(
-                  (n) => n.toLowerCase() === assignCollection.trim().toLowerCase(),
-                )
-                  ? `All imported products will be added to “${assignCollection.trim()}”.`
-                  : `A new collection “${assignCollection.trim()}” will be created and all imported products added to it.`}
+                {collectionChoice === "__new__"
+                  ? `A new collection “${assignCollection}” will be created and every product in the sheet added to it.`
+                  : `Every product in the sheet will be added to “${assignCollection}”.`}
               </span>
             )}
-          </label>
+          </div>
 
           <input
             ref={fileRef}
