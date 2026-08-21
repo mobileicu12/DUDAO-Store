@@ -200,10 +200,15 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
     setSaving(true);
     try {
       const res = await fetch(`/api/billing/${id}`, { method: "DELETE" });
-      const body = await res.json();
+      const body = (await res.json()) as { error?: string; auditId?: string; number?: string };
       if (!res.ok) throw new Error(body.error ?? "That invoice was not deleted.");
       toast.success("Invoice deleted and stock put back.");
-      router.push("/portal/invoices");
+      // Hand the delete to the list so it can be undone there (same audit
+      // snapshot the Activity log restores from).
+      const undo = body.auditId
+        ? `?undo=${encodeURIComponent(body.auditId)}&num=${encodeURIComponent(body.number ?? "")}`
+        : "";
+      router.push(`/portal/invoices${undo}`);
     } catch (e) {
       toast.error((e as Error).message);
       setConfirmDelete(false);

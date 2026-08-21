@@ -126,6 +126,16 @@ export default function InvoicesClient() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // A delete from an invoice's own page hands its undo here via ?undo=<auditId>.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const auditId = params.get("undo");
+    if (auditId) {
+      setDeleted([{ auditId, number: params.get("num") ?? "" }]);
+      window.history.replaceState(null, "", "/portal/invoices");
+    }
+  }, []);
+
   useEffect(() => {
     if (!reportsOpen) return;
     const onClick = (e: MouseEvent) => {
