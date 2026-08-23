@@ -249,33 +249,33 @@ export const SMART_RULE_FIELDS = [
  *   tag = lcd
  *   title contains iphone
  */
-export function smartRuleWhere(rule: string): Prisma.ProductWhereInput | null {
+type ParsedRule = { field: string; op: "eq" | "contains"; value: string };
+
+function parseRule(rule: string): ParsedRule | null {
   const r = (rule ?? "").trim();
   if (!r) return null;
-
-  let field: string;
-  let value: string;
-  let op: "eq" | "contains";
   const cAt = r.toLowerCase().indexOf(" contains ");
   if (cAt >= 0) {
-    field = r.slice(0, cAt).trim().toLowerCase();
-    value = r.slice(cAt + " contains ".length).trim();
-    op = "contains";
-  } else {
-    const eq = r.indexOf("=");
-    if (eq < 0) return null;
-    field = r.slice(0, eq).trim().toLowerCase();
-    value = r.slice(eq + 1).trim();
-    op = "eq";
+    const value = r.slice(cAt + " contains ".length).trim();
+    if (!value) return null;
+    return { field: r.slice(0, cAt).trim().toLowerCase(), op: "contains", value };
   }
+  const eq = r.indexOf("=");
+  if (eq < 0) return null;
+  const value = r.slice(eq + 1).trim();
   if (!value) return null;
+  return { field: r.slice(0, eq).trim().toLowerCase(), op: "eq", value };
+}
 
+export function smartRuleWhere(rule: string): Prisma.ProductWhereInput | null {
+  const p = parseRule(rule);
+  if (!p) return null;
   const text = (): Prisma.StringFilter =>
-    op === "contains"
-      ? { contains: value, mode: "insensitive" }
-      : { equals: value, mode: "insensitive" };
+    p.op === "contains"
+      ? { contains: p.value, mode: "insensitive" }
+      : { equals: p.value, mode: "insensitive" };
 
-  switch (field) {
+  switch (p.field) {
     case "type":
     case "producttype":
       return { productType: text() };
@@ -287,12 +287,51 @@ export function smartRuleWhere(rule: string): Prisma.ProductWhereInput | null {
       return { model: text() };
     case "title":
     case "name":
-      return { title: { contains: value, mode: "insensitive" } };
+      return { title: { contains: p.value, mode: "insensitive" } };
     case "tag":
     case "tags":
-      return { tags: { has: value } };
+      return { tags: { has: p.value } };
     default:
       return null;
+  }
+}
+
+/** In-memory version of the rule, for products not yet in the DB (import preview). */
+export function matchesSmartRule(
+  product: {
+    productType?: string;
+    brand?: string;
+    vendor?: string;
+    model?: string;
+    title?: string;
+    tags?: string[];
+  },
+  rule: string,
+): boolean {
+  const p = parseRule(rule);
+  if (!p) return false;
+  const v = p.value.toLowerCase();
+  const eq = (a?: string) => (a ?? "").toLowerCase() === v;
+  const has = (a?: string) => (a ?? "").toLowerCase().includes(v);
+  const str = (a?: string) => (p.op === "contains" ? has(a) : eq(a));
+  switch (p.field) {
+    case "type":
+    case "producttype":
+      return str(product.productType);
+    case "brand":
+      return str(product.brand);
+    case "vendor":
+      return str(product.vendor);
+    case "model":
+      return str(product.model);
+    case "title":
+    case "name":
+      return has(product.title);
+    case "tag":
+    case "tags":
+      return (product.tags ?? []).some((t) => t.toLowerCase() === v);
+    default:
+      return false;
   }
 }
 

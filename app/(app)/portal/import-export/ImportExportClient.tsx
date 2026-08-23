@@ -369,7 +369,20 @@ export default function ImportExportClient() {
                             ))}
                           </span>
                         ) : (
-                          r.error ?? "—"
+                          r.error ?? (r.collections && r.collections.length ? "" : "—")
+                        )}
+                        {r.collections && r.collections.length > 0 && (
+                          <span className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[0.7rem] text-faint">→</span>
+                            {r.collections.map((c, i) => (
+                              <span
+                                key={i}
+                                className="rounded bg-accent-subtle px-1.5 py-0.5 text-[0.7rem] text-accent"
+                              >
+                                {c}
+                              </span>
+                            ))}
+                          </span>
                         )}
                       </td>
                     </tr>

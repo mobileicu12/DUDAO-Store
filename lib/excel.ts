@@ -2,7 +2,7 @@ import "server-only";
 import ExcelJS from "exceljs";
 import { db, money2, slugify } from "./db";
 import { EXPORT_COLUMNS } from "./products";
-import { applySmartRules } from "./collections";
+import { applySmartRules, matchesSmartRule } from "./collections";
 import { tierNum } from "./pricing";
 
 /**
@@ -130,6 +130,8 @@ export type ImportRowResult = {
   error?: string;
   /** On a preview, the fields that would change on an updated row. */
   changes?: string[];
+  /** On a preview, the collections this product would end up in. */
+  collections?: string[];
 };
 
 export type ImportSummary = {
@@ -425,6 +427,20 @@ export async function importCatalog(
       ["productType", "type"], ["vendor", "vendor"], ["tags", "tags"],
       ["descriptionHtml", "description"],
     ];
+
+    // Smart-rule collections a product would auto-join, shown alongside the
+    // sheet/assigned collections so the preview reflects the real destination.
+    const smartCollections = await db.collection
+      .findMany({ where: { NOT: { smartRule: "" } }, select: { title: true, smartRule: true } })
+      .catch(() => [] as { title: string; smartRule: string }[]);
+    const collectionsFor = (p: Parsed): string[] => {
+      const names = new Set(p.collectionNames);
+      for (const sc of smartCollections) {
+        if (matchesSmartRule(p.data, sc.smartRule)) names.add(sc.title);
+      }
+      return [...names].sort((a, b) => a.localeCompare(b));
+    };
+
     for (const u of toUpdate) {
       const cur = currentById.get(u.id) ?? {};
       const changes: string[] = [];
@@ -440,18 +456,27 @@ export async function importCatalog(
           : a === b;
         if (!same) changes.push(`${label} ${a}→${b}`);
       }
+      const cols = collectionsFor(u.p);
       results.push({
         row: u.p.row,
         title: u.p.title,
         ok: true,
         action: changes.length ? "updated" : "skipped",
         changes: changes.length ? changes : undefined,
+        collections: cols.length ? cols : undefined,
       });
       if (changes.length) updated++;
       else skipped++;
     }
     for (const c of toCreate) {
-      results.push({ row: c.p.row, title: c.p.title, ok: true, action: "created" });
+      const cols = collectionsFor(c.p);
+      results.push({
+        row: c.p.row,
+        title: c.p.title,
+        ok: true,
+        action: "created",
+        collections: cols.length ? cols : undefined,
+      });
       created++;
     }
     results.sort((a, b) => a.row - b.row);
