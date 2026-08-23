@@ -10,6 +10,7 @@ import {
   uniqueHandle,
 } from "./db";
 import { channelsFromTags, withChannels, type ChannelKey } from "./channels";
+import { applySmartRules } from "./collections";
 import { tierNum, type TierPrices } from "./pricing";
 
 /**
@@ -330,6 +331,8 @@ export async function createProduct(input: ProductInput): Promise<ProductRecord>
     include: withFirstImage,
   });
 
+  // Auto-file the new product into any smart-rule collection it matches.
+  await applySmartRules([row.id]).catch(() => {});
   return toRecord(row);
 }
 
@@ -401,6 +404,8 @@ export async function updateProduct(
     include: withFirstImage,
   });
 
+  // A type/brand/tag edit may bring the product into a smart collection.
+  await applySmartRules([row.id]).catch(() => {});
   return toRecord(row);
 }
 

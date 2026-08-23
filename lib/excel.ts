@@ -2,6 +2,7 @@ import "server-only";
 import ExcelJS from "exceljs";
 import { db, money2, slugify } from "./db";
 import { EXPORT_COLUMNS } from "./products";
+import { applySmartRules } from "./collections";
 import { tierNum } from "./pricing";
 
 /**
@@ -622,6 +623,13 @@ export async function importCatalog(
   }
   for (const part of chunk(links, 1000)) {
     await db.collectionProduct.createMany({ data: part, skipDuplicates: true });
+  }
+
+  // Smart collections: fold every imported product into any rule-based
+  // collection it now matches (additive — sits alongside the manual and
+  // sheet/assigned memberships above).
+  if (withProductId.length) {
+    await applySmartRules(withProductId.map((w) => w.productId)).catch(() => {});
   }
 
   results.sort((a, b) => a.row - b.row);

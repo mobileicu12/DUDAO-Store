@@ -24,16 +24,26 @@ export async function POST(req: Request) {
   if (denied) return denied;
 
   try {
-    const body = (await req.json()) as { action?: string; title?: string };
+    const body = (await req.json()) as {
+      action?: string;
+      title?: string;
+      descriptionHtml?: string;
+      smartRule?: string;
+    };
 
     if (body.action === "organize") {
       return NextResponse.json(await autoOrganise());
     }
 
     if (!body.title) throw invalid("Give the collection a name.");
-    return NextResponse.json(await createCollection({ title: body.title }), {
-      status: 201,
-    });
+    return NextResponse.json(
+      await createCollection({
+        title: body.title,
+        descriptionHtml: body.descriptionHtml,
+        smartRule: body.smartRule,
+      }),
+      { status: 201 },
+    );
   } catch (err) {
     return errorResponse(err, "save this collection");
   }

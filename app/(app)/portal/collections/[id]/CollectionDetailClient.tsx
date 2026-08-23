@@ -36,6 +36,7 @@ export default function CollectionDetailClient({ id }: { id: string }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [smartRule, setSmartRule] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/collections/${id}`, { cache: "no-store" });
@@ -48,6 +49,7 @@ export default function CollectionDetailClient({ id }: { id: string }) {
     setTitle(data.title);
     setDescription(data.descriptionHtml);
     setImageUrl(data.imageUrl);
+    setSmartRule(data.smartRule);
     setSelected(new Set());
   }, [id]);
 
@@ -67,7 +69,7 @@ export default function CollectionDetailClient({ id }: { id: string }) {
       const res = await fetch(`/api/collections/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, descriptionHtml: description, imageUrl }),
+        body: JSON.stringify({ title, descriptionHtml: description, imageUrl, smartRule }),
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => ({}))) as { error?: string };
@@ -162,16 +164,40 @@ export default function CollectionDetailClient({ id }: { id: string }) {
         }
       />
 
-      {collection.smartRule && (
-        <div className="mb-4">
-          <Alert tone="info" title="Created by auto-organise">
-            This collection was built from the rule{" "}
-            <code className="font-mono">{collection.smartRule}</code>. You can
-            still add and remove products by hand — the rule is a record of how
-            it started, not something that keeps re-running.
-          </Alert>
-        </div>
-      )}
+      <div className="mb-4">
+        <Card>
+          <CardHeader
+            title="Smart rule"
+            subtitle="Auto-add every product that matches — new imports and edits are filed in automatically. Products you add by hand or from an import stay put; the rule only ever adds."
+          />
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <Field label="Rule" className="min-w-[16rem] flex-1">
+              <Input
+                value={smartRule}
+                onChange={(e) => setSmartRule(e.target.value)}
+                placeholder="e.g. brand = Apple"
+              />
+            </Field>
+            <Button variant="primary" loading={busy} onClick={save}>
+              Save &amp; apply rule
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            Format: <code className="font-mono">field = value</code> or{" "}
+            <code className="font-mono">field contains value</code>. Fields:{" "}
+            <code className="font-mono">productType</code>,{" "}
+            <code className="font-mono">brand</code>,{" "}
+            <code className="font-mono">vendor</code>,{" "}
+            <code className="font-mono">model</code>,{" "}
+            <code className="font-mono">tag</code>,{" "}
+            <code className="font-mono">title</code>. Examples:{" "}
+            <code className="font-mono">productType = Screens</code>,{" "}
+            <code className="font-mono">tag = lcd</code>,{" "}
+            <code className="font-mono">title contains iphone</code>. Leave blank
+            for a hand-picked collection.
+          </p>
+        </Card>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
         <Card padded={false}>

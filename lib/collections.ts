@@ -1,4 +1,5 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { db, invalid, notFound, num, uniqueHandle } from "./db";
 
 /** Collections group products for browsing and for filtered marketplace exports. */
@@ -81,6 +82,7 @@ export async function createCollection(input: {
   title: string;
   descriptionHtml?: string;
   imageUrl?: string;
+  smartRule?: string;
 }): Promise<CollectionSummary> {
   if (!input.title?.trim()) {
     throw invalid("Give the collection a name before saving.");
@@ -92,9 +94,13 @@ export async function createCollection(input: {
       handle: await uniqueHandle("collection", input.title),
       descriptionHtml: input.descriptionHtml ?? "",
       imageUrl: input.imageUrl ?? "",
+      smartRule: (input.smartRule ?? "").trim(),
     },
     include: { _count: { select: { products: true } } },
   });
+
+  // File matching products in right away when a rule is set at creation.
+  if (row.smartRule) await applySmartRuleToCollection(row.id, row.smartRule);
 
   return {
     id: row.id,
@@ -112,6 +118,7 @@ export async function updateCollection(
     title?: string;
     descriptionHtml?: string;
     imageUrl?: string;
+    smartRule?: string;
   },
 ): Promise<void> {
   const existing = await db.collection.findUnique({
@@ -128,8 +135,15 @@ export async function updateCollection(
         ? { descriptionHtml: input.descriptionHtml }
         : {}),
       ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl } : {}),
+      ...(input.smartRule !== undefined ? { smartRule: input.smartRule.trim() } : {}),
     },
   });
+
+  // Applying the (possibly new) rule immediately keeps "set a rule" and "see the
+  // products" one action, and matches how staff expect a smart collection to work.
+  if (input.smartRule !== undefined && input.smartRule.trim()) {
+    await applySmartRuleToCollection(id, input.smartRule.trim());
+  }
 }
 
 export async function deleteCollection(id: string): Promise<void> {
@@ -208,4 +222,113 @@ export async function autoOrganise(): Promise<{
   }
 
   return { created, assigned };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Smart rules                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The fields a smart rule can match on, for the UI help text and validation.
+ */
+export const SMART_RULE_FIELDS = [
+  { key: "productType", label: "Type" },
+  { key: "brand", label: "Brand" },
+  { key: "vendor", label: "Vendor" },
+  { key: "tag", label: "Tag" },
+  { key: "title", label: "Title" },
+] as const;
+
+/**
+ * Turn a rule string into a product filter. One condition, in the form
+ * `field = value` (exact, case-insensitive) or `field contains value`. Tags
+ * match an exact tag on the product. Returns null for an empty/unknown rule.
+ *
+ *   productType = Screens
+ *   brand = Apple
+ *   tag = lcd
+ *   title contains iphone
+ */
+export function smartRuleWhere(rule: string): Prisma.ProductWhereInput | null {
+  const r = (rule ?? "").trim();
+  if (!r) return null;
+
+  let field: string;
+  let value: string;
+  let op: "eq" | "contains";
+  const cAt = r.toLowerCase().indexOf(" contains ");
+  if (cAt >= 0) {
+    field = r.slice(0, cAt).trim().toLowerCase();
+    value = r.slice(cAt + " contains ".length).trim();
+    op = "contains";
+  } else {
+    const eq = r.indexOf("=");
+    if (eq < 0) return null;
+    field = r.slice(0, eq).trim().toLowerCase();
+    value = r.slice(eq + 1).trim();
+    op = "eq";
+  }
+  if (!value) return null;
+
+  const text = (): Prisma.StringFilter =>
+    op === "contains"
+      ? { contains: value, mode: "insensitive" }
+      : { equals: value, mode: "insensitive" };
+
+  switch (field) {
+    case "type":
+    case "producttype":
+      return { productType: text() };
+    case "brand":
+      return { brand: text() };
+    case "vendor":
+      return { vendor: text() };
+    case "model":
+      return { model: text() };
+    case "title":
+    case "name":
+      return { title: { contains: value, mode: "insensitive" } };
+    case "tag":
+    case "tags":
+      return { tags: { has: value } };
+    default:
+      return null;
+  }
+}
+
+/** True if a rule string is understood (so the UI can warn on a typo). */
+export const isValidSmartRule = (rule: string): boolean => smartRuleWhere(rule) !== null;
+
+/** Add every product matching one collection's rule to it (never removes). */
+async function applySmartRuleToCollection(
+  collectionId: string,
+  rule: string,
+  scopeIds?: string[],
+): Promise<number> {
+  const where = smartRuleWhere(rule);
+  if (!where) return 0;
+  const full: Prisma.ProductWhereInput =
+    scopeIds && scopeIds.length ? { AND: [where, { id: { in: scopeIds } }] } : where;
+  const matches = await db.product.findMany({ where: full, select: { id: true } });
+  if (!matches.length) return 0;
+  return addProducts(collectionId, matches.map((m) => m.id));
+}
+
+/**
+ * Re-evaluate every smart-rule collection and add matching products. Additive
+ * only — products added by hand or by an import stay put, so a product freely
+ * belongs to as many collections as apply (rule, import and manual all stack).
+ * Pass `scopeIds` to limit the pass to just-changed products (e.g. after an
+ * import), or omit to sweep the whole catalog.
+ */
+export async function applySmartRules(scopeIds?: string[]): Promise<number> {
+  const collections = await db.collection.findMany({
+    where: { NOT: { smartRule: "" } },
+    select: { id: true, smartRule: true },
+  });
+  let added = 0;
+  for (const c of collections) {
+    added += await applySmartRuleToCollection(c.id, c.smartRule, scopeIds);
+  }
+  return added;
 }
