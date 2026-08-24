@@ -159,6 +159,61 @@ export async function deleteCollection(id: string): Promise<void> {
   await db.collection.delete({ where: { id } });
 }
 
+/** Put a set of collections under one group heading (blank clears the group). */
+export async function setCollectionGroup(
+  ids: string[],
+  group: string,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const r = await db.collection.updateMany({
+    where: { id: { in: ids } },
+    data: { group: group.trim() },
+  });
+  return r.count;
+}
+
+/**
+ * Auto-group collections whose names share a base — "Camera Lens",
+ * "Camera Lens (2pcs)", "Camera Lens (Complete Set)" all become group
+ * "Camera Lens". Strips a trailing "(…)" to find the base, then groups any base
+ * shared by two or more collections. Only touches collections that don't already
+ * have a group, so it never overwrites groups set by hand.
+ */
+export async function autoGroupCollections(): Promise<{
+  grouped: number;
+  groups: number;
+}> {
+  const rows = await db.collection.findMany({
+    where: { group: "" },
+    select: { id: true, title: true },
+  });
+
+  const base = (t: string) =>
+    t.replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+/g, " ").trim();
+
+  const byBase = new Map<string, string[]>();
+  for (const c of rows) {
+    const b = base(c.title);
+    if (!b) continue;
+    if (!byBase.has(b)) byBase.set(b, []);
+    byBase.get(b)!.push(c.id);
+  }
+
+  let grouped = 0;
+  let groups = 0;
+  for (const [b, ids] of byBase) {
+    if (ids.length < 2) continue; // a lone collection isn't a group
+    await db.collection.updateMany({
+      where: { id: { in: ids } },
+      data: { group: b },
+    });
+    grouped += ids.length;
+    groups++;
+  }
+
+  return { grouped, groups };
+}
+
 export async function addProducts(
   collectionId: string,
   productIds: string[],

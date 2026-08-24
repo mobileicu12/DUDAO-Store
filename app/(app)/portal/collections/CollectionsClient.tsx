@@ -24,10 +24,69 @@ export default function CollectionsClient() {
   const [title, setTitle] = useState("");
   const [newGroup, setNewGroup] = useState("");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkGroup, setBulkGroup] = useState("");
   const existingGroups = useMemo(
     () => [...new Set(collections.map((c) => c.group).filter(Boolean))].sort(),
     [collections],
   );
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const applyGroup = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/collections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-group", ids, group: bulkGroup }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "That did not work.");
+      toast.success(
+        bulkGroup.trim()
+          ? `Grouped ${d.updated} collection${d.updated === 1 ? "" : "s"} under “${bulkGroup.trim()}”.`
+          : `Cleared the group on ${d.updated} collection${d.updated === 1 ? "" : "s"}.`,
+      );
+      setSelected(new Set());
+      setBulkGroup("");
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const autoGroup = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/collections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "auto-group" }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "That did not work.");
+      toast.success(
+        d.groups
+          ? `Made ${d.groups} group${d.groups === 1 ? "" : "s"} from ${d.grouped} collections.`
+          : "No new groups found — names didn't share a common base.",
+      );
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Group the collections under their group heading; ungrouped ones fall into a
   // final "Ungrouped" section. Search narrows by title or group first.
@@ -121,6 +180,9 @@ export default function CollectionsClient() {
         }
         actions={
           <>
+            <Button onClick={autoGroup} disabled={busy}>
+              Auto-group
+            </Button>
             <Button onClick={organise} disabled={busy}>
               Auto-organise
             </Button>
@@ -156,14 +218,41 @@ export default function CollectionsClient() {
         </div>
       ) : (
         <>
-          <div className="mb-4">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search collections or groups…"
               className="h-9 w-full sm:w-72"
             />
+            <span className="text-xs text-muted">
+              Tick collections to group them together, or use Auto-group.
+            </span>
           </div>
+
+          {selected.size > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-accent/40 bg-accent-subtle px-3 py-2">
+              <span className="text-sm font-medium text-ink">{selected.size} selected</span>
+              <Input
+                list="bulk-groups"
+                value={bulkGroup}
+                onChange={(e) => setBulkGroup(e.target.value)}
+                placeholder="Group name (blank to clear)"
+                className="h-8 w-52"
+              />
+              <datalist id="bulk-groups">
+                {existingGroups.map((g) => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+              <Button size="sm" variant="primary" loading={busy} onClick={applyGroup}>
+                Set group
+              </Button>
+              <Button size="sm" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          )}
 
           {groups.named.map(([g, list]) => (
             <section key={g} className="mb-6">
@@ -175,7 +264,12 @@ export default function CollectionsClient() {
               </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {list.map((c) => (
-                  <CollectionCard key={c.id} c={c} />
+                  <CollectionCard
+                    key={c.id}
+                    c={c}
+                    selected={selected.has(c.id)}
+                    onToggle={() => toggle(c.id)}
+                  />
                 ))}
               </div>
             </section>
@@ -188,7 +282,12 @@ export default function CollectionsClient() {
               )}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {groups.ungrouped.map((c) => (
-                  <CollectionCard key={c.id} c={c} />
+                  <CollectionCard
+                    key={c.id}
+                    c={c}
+                    selected={selected.has(c.id)}
+                    onToggle={() => toggle(c.id)}
+                  />
                 ))}
               </div>
             </section>
@@ -252,12 +351,41 @@ export default function CollectionsClient() {
   );
 }
 
-function CollectionCard({ c }: { c: CollectionSummary }) {
+function CollectionCard({
+  c,
+  selected,
+  onToggle,
+}: {
+  c: CollectionSummary;
+  selected: boolean;
+  onToggle: () => void;
+}) {
   return (
     <Link
       href={`/portal/collections/${c.id}`}
-      className="group overflow-hidden rounded-xl border border-line bg-surface shadow-sm transition-all hover:border-accent hover:shadow-md"
+      className={`group relative overflow-hidden rounded-xl border bg-surface shadow-sm transition-all hover:shadow-md ${
+        selected ? "border-accent ring-2 ring-accent/40" : "border-line hover:border-accent"
+      }`}
     >
+      <label
+        className={`absolute left-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border bg-surface/90 shadow-sm transition-opacity ${
+          selected ? "border-accent opacity-100" : "border-line opacity-0 group-hover:opacity-100"
+        }`}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggle();
+        }}
+        title="Select to group"
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          readOnly
+          tabIndex={-1}
+          className="h-4 w-4 accent-[var(--color-accent)]"
+        />
+      </label>
       <div className="flex h-28 items-center justify-center bg-subtle">
         {c.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
