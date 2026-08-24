@@ -37,6 +37,19 @@ export default function CollectionDetailClient({ id }: { id: string }) {
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [smartRule, setSmartRule] = useState("");
+  const [group, setGroup] = useState("");
+  const [groupNames, setGroupNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/collections", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { collections?: { group: string }[] } | null) => {
+        if (d?.collections) {
+          setGroupNames([...new Set(d.collections.map((c) => c.group).filter(Boolean))].sort());
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/collections/${id}`, { cache: "no-store" });
@@ -50,6 +63,7 @@ export default function CollectionDetailClient({ id }: { id: string }) {
     setDescription(data.descriptionHtml);
     setImageUrl(data.imageUrl);
     setSmartRule(data.smartRule);
+    setGroup(data.group);
     setSelected(new Set());
   }, [id]);
 
@@ -69,7 +83,7 @@ export default function CollectionDetailClient({ id }: { id: string }) {
       const res = await fetch(`/api/collections/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, descriptionHtml: description, imageUrl, smartRule }),
+        body: JSON.stringify({ title, descriptionHtml: description, imageUrl, smartRule, group }),
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => ({}))) as { error?: string };
@@ -296,6 +310,22 @@ export default function CollectionDetailClient({ id }: { id: string }) {
                   onChange={(e) => setImageUrl(e.target.value)}
                   placeholder="https://…"
                 />
+              </Field>
+              <Field
+                label="Group"
+                hint="Shows related collections under one heading on the Collections page — e.g. put every “Camera Lens” variant in the group “Camera Lens”."
+              >
+                <Input
+                  list="collection-groups"
+                  value={group}
+                  onChange={(e) => setGroup(e.target.value)}
+                  placeholder="e.g. Camera Lens"
+                />
+                <datalist id="collection-groups">
+                  {groupNames.map((g) => (
+                    <option key={g} value={g} />
+                  ))}
+                </datalist>
               </Field>
             </div>
           </Card>

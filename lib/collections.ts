@@ -10,6 +10,7 @@ export type CollectionSummary = {
   title: string;
   imageUrl: string;
   smartRule: string;
+  group: string;
   productCount: number;
 };
 
@@ -37,6 +38,7 @@ export async function listCollections(): Promise<CollectionSummary[]> {
     title: c.title,
     imageUrl: c.imageUrl,
     smartRule: c.smartRule,
+    group: c.group,
     productCount: c._count.products,
   }));
 }
@@ -65,6 +67,7 @@ export async function getCollection(
     title: row.title,
     imageUrl: row.imageUrl,
     smartRule: row.smartRule,
+    group: row.group,
     descriptionHtml: row.descriptionHtml,
     productCount: row.products.length,
     products: row.products.map((cp) => ({
@@ -83,6 +86,7 @@ export async function createCollection(input: {
   descriptionHtml?: string;
   imageUrl?: string;
   smartRule?: string;
+  group?: string;
 }): Promise<CollectionSummary> {
   if (!input.title?.trim()) {
     throw invalid("Give the collection a name before saving.");
@@ -95,6 +99,7 @@ export async function createCollection(input: {
       descriptionHtml: input.descriptionHtml ?? "",
       imageUrl: input.imageUrl ?? "",
       smartRule: (input.smartRule ?? "").trim(),
+      group: (input.group ?? "").trim(),
     },
     include: { _count: { select: { products: true } } },
   });
@@ -108,6 +113,7 @@ export async function createCollection(input: {
     title: row.title,
     imageUrl: row.imageUrl,
     smartRule: row.smartRule,
+    group: row.group,
     productCount: row._count.products,
   };
 }
@@ -119,6 +125,7 @@ export async function updateCollection(
     descriptionHtml?: string;
     imageUrl?: string;
     smartRule?: string;
+    group?: string;
   },
 ): Promise<void> {
   const existing = await db.collection.findUnique({
@@ -136,6 +143,7 @@ export async function updateCollection(
         : {}),
       ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl } : {}),
       ...(input.smartRule !== undefined ? { smartRule: input.smartRule.trim() } : {}),
+      ...(input.group !== undefined ? { group: input.group.trim() } : {}),
     },
   });
 

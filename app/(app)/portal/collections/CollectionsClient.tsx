@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { CollectionSummary } from "@/lib/collections";
 import {
@@ -22,6 +22,34 @@ export default function CollectionsClient() {
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const [newGroup, setNewGroup] = useState("");
+  const [search, setSearch] = useState("");
+  const existingGroups = useMemo(
+    () => [...new Set(collections.map((c) => c.group).filter(Boolean))].sort(),
+    [collections],
+  );
+
+  // Group the collections under their group heading; ungrouped ones fall into a
+  // final "Ungrouped" section. Search narrows by title or group first.
+  const groups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const shown = q
+      ? collections.filter(
+          (c) => c.title.toLowerCase().includes(q) || c.group.toLowerCase().includes(q),
+        )
+      : collections;
+    const byGroup = new Map<string, CollectionSummary[]>();
+    for (const c of shown) {
+      const key = c.group.trim();
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(c);
+    }
+    const named = [...byGroup.entries()]
+      .filter(([g]) => g !== "")
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    const ungrouped = byGroup.get("") ?? [];
+    return { named, ungrouped };
+  }, [collections, search]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -47,13 +75,14 @@ export default function CollectionsClient() {
       const res = await fetch("/api/collections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({ title, group: newGroup }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "That was not created.");
       toast.success(`${title} created.`);
       setAddOpen(false);
       setTitle("");
+      setNewGroup("");
       await load();
     } catch (e) {
       toast.error((e as Error).message);
@@ -126,41 +155,51 @@ export default function CollectionsClient() {
           />
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {collections.map((c) => (
-            <Link
-              key={c.id}
-              href={`/portal/collections/${c.id}`}
-              className="group overflow-hidden rounded-xl border border-line bg-surface shadow-sm transition-all hover:border-accent hover:shadow-md"
-            >
-              <div className="flex h-28 items-center justify-center bg-subtle">
-                {c.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={c.imageUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="text-3xl font-semibold text-faint">
-                    {c.title.slice(0, 2).toUpperCase()}
-                  </span>
-                )}
+        <>
+          <div className="mb-4">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search collections or groups…"
+              className="h-9 w-full sm:w-72"
+            />
+          </div>
+
+          {groups.named.map(([g, list]) => (
+            <section key={g} className="mb-6">
+              <div className="mb-2 flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-ink">{g}</h2>
+                <span className="text-xs text-muted">
+                  {list.length} collection{list.length === 1 ? "" : "s"}
+                </span>
               </div>
-              <div className="p-3">
-                <p className="truncate text-sm font-medium text-ink group-hover:text-accent">
-                  {c.title}
-                </p>
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <span className="text-xs text-muted">
-                    {c.productCount} product{c.productCount === 1 ? "" : "s"}
-                  </span>
-                  {c.smartRule && <Badge tone="info">Rule</Badge>}
-                </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {list.map((c) => (
+                  <CollectionCard key={c.id} c={c} />
+                ))}
               </div>
-            </Link>
+            </section>
           ))}
-        </div>
+
+          {groups.ungrouped.length > 0 && (
+            <section className="mb-6">
+              {groups.named.length > 0 && (
+                <h2 className="mb-2 text-sm font-semibold text-ink">Ungrouped</h2>
+              )}
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {groups.ungrouped.map((c) => (
+                  <CollectionCard key={c.id} c={c} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {groups.named.length === 0 && groups.ungrouped.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted">
+              No collections match “{search}”.
+            </p>
+          )}
+        </>
       )}
 
       <Modal
@@ -185,15 +224,61 @@ export default function CollectionsClient() {
           </>
         }
       >
-        <Field label="Name" required>
-          <Input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Screens"
-          />
-        </Field>
+        <div className="space-y-3">
+          <Field label="Name" required>
+            <Input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Screens"
+            />
+          </Field>
+          <Field label="Group" hint="Optional — groups related collections together on this page.">
+            <Input
+              list="new-collection-groups"
+              value={newGroup}
+              onChange={(e) => setNewGroup(e.target.value)}
+              placeholder="e.g. Camera Lens"
+            />
+            <datalist id="new-collection-groups">
+              {existingGroups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
       </Modal>
     </div>
+  );
+}
+
+function CollectionCard({ c }: { c: CollectionSummary }) {
+  return (
+    <Link
+      href={`/portal/collections/${c.id}`}
+      className="group overflow-hidden rounded-xl border border-line bg-surface shadow-sm transition-all hover:border-accent hover:shadow-md"
+    >
+      <div className="flex h-28 items-center justify-center bg-subtle">
+        {c.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={c.imageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="text-3xl font-semibold text-faint">
+            {c.title.slice(0, 2).toUpperCase()}
+          </span>
+        )}
+      </div>
+      <div className="p-3">
+        <p className="truncate text-sm font-medium text-ink group-hover:text-accent">
+          {c.title}
+        </p>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="text-xs text-muted">
+            {c.productCount} product{c.productCount === 1 ? "" : "s"}
+          </span>
+          {c.smartRule && <Badge tone="info">Rule</Badge>}
+        </div>
+      </div>
+    </Link>
   );
 }

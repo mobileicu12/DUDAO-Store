@@ -29,6 +29,7 @@ export async function POST(req: Request) {
       title?: string;
       descriptionHtml?: string;
       smartRule?: string;
+      group?: string;
     };
 
     if (body.action === "organize") {
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
         title: body.title,
         descriptionHtml: body.descriptionHtml,
         smartRule: body.smartRule,
+        group: body.group,
       }),
       { status: 201 },
     );

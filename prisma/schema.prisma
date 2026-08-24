@@ -283,6 +283,9 @@ model Collection {
   /// Rule-driven collections are maintained by productType and are read-only
   /// in the product picker.
   smartRule       String  @default("")
+  /// Optional heading that groups related collections together on the list
+  /// (e.g. "Camera Lens" for its 2pcs / 3pcs / complete-set variants).
+  group           String  @default("")
 
   products  CollectionProduct[]
   createdAt DateTime @default(now())
