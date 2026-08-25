@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+import { Pagination } from "@/components/ui/Pagination";
 
 type DeletedInvoice = {
   id: string;
@@ -57,6 +58,8 @@ export default function LogsClient() {
   const [only, setOnly] = useState<"all" | "critical">("all");
   const [restoring, setRestoring] = useState<DeletedInvoice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +92,16 @@ export default function LogsClient() {
       return hay.includes(needle);
     });
   }, [entries, q, only]);
+
+  // Reset to the first page when a filter changes the result set.
+  useEffect(() => {
+    setPage(1);
+  }, [q, only, months]);
+
+  const pageRows = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
 
   async function confirmRestore() {
     if (!restoring) return;
@@ -205,7 +218,7 @@ export default function LogsClient() {
           />
         ) : (
           <ul className="divide-y divide-line">
-            {filtered.map((e, i) => {
+            {pageRows.map((e, i) => {
               const critical = AUDIT_CRITICAL.has(e.action);
               return (
                 <li
@@ -235,6 +248,16 @@ export default function LogsClient() {
               );
             })}
           </ul>
+        )}
+
+        {!loading && filtered.length > 0 && (
+          <Pagination
+            total={filtered.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </Card>
 
