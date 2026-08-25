@@ -18,6 +18,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
+import { Pagination } from "@/components/ui/Pagination";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -63,6 +64,8 @@ export default function SettlementsClient() {
   const [sales, setSales] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Add form
   const [fSupplier, setFSupplier] = useState("");
@@ -104,6 +107,16 @@ export default function SettlementsClient() {
       return x >= f && x <= t;
     });
   }, [rows, from, to]);
+
+  // Reset to page one when the period filter changes the row set.
+  useEffect(() => {
+    setPage(1);
+  }, [period]);
+
+  const pageRows = useMemo(
+    () => inPeriod.slice((page - 1) * pageSize, page * pageSize),
+    [inPeriod, page, pageSize],
+  );
 
   const buyingIncluded = inPeriod
     .filter((r) => r.included)
@@ -260,7 +273,7 @@ export default function SettlementsClient() {
                 </tr>
               </thead>
               <tbody>
-                {inPeriod.map((r) => (
+                {pageRows.map((r) => (
                   <tr key={r.id} className="border-b border-line last:border-0">
                     <td className="px-3 py-2.5 text-muted">
                       {new Date(r.date).toLocaleDateString("en-GB")}
@@ -293,6 +306,16 @@ export default function SettlementsClient() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {!loading && inPeriod.length > 0 && (
+          <Pagination
+            total={inPeriod.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </Card>
     </div>
