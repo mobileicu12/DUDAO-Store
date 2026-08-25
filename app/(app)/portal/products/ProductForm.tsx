@@ -52,6 +52,8 @@ export type ProductFormValues = {
   stock: string;
   images: { url: string; alt: string }[];
   channels: ChannelKey[];
+  tags: string[];
+  collectionIds: string[];
 };
 
 export const EMPTY_PRODUCT: ProductFormValues = {
@@ -70,6 +72,8 @@ export const EMPTY_PRODUCT: ProductFormValues = {
   stock: "0",
   images: [],
   channels: [],
+  tags: [],
+  collectionIds: [],
 };
 
 export default function ProductForm({
@@ -86,14 +90,50 @@ export default function ProductForm({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  const [tagInput, setTagInput] = useState("");
+  const [allCollections, setAllCollections] = useState<
+    { id: string; title: string; group: string }[]
+  >([]);
 
   useEffect(() => setForm(initial), [initial]);
+
+  // The collection picker needs the full list to show what's available.
+  useEffect(() => {
+    fetch("/api/collections", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { collections: [] }))
+      .then((d: { collections: { id: string; title: string; group: string }[] }) =>
+        setAllCollections(d.collections ?? []),
+      )
+      .catch(() => {});
+  }, []);
 
   const set = (patch: Partial<ProductFormValues>) =>
     setForm((prev) => ({ ...prev, ...patch }));
 
   const setTier = (key: TierKey, value: string) =>
     setForm((prev) => ({ ...prev, tiers: { ...prev.tiers, [key]: value } }));
+
+  const addTag = (raw: string) => {
+    const t = raw.trim().replace(/,+$/, "").trim();
+    if (!t) return;
+    setForm((prev) =>
+      prev.tags.some((x) => x.toLowerCase() === t.toLowerCase())
+        ? prev
+        : { ...prev, tags: [...prev.tags, t] },
+    );
+    setTagInput("");
+  };
+
+  const removeTag = (t: string) =>
+    setForm((prev) => ({ ...prev, tags: prev.tags.filter((x) => x !== t) }));
+
+  const toggleCollection = (id: string) =>
+    setForm((prev) => ({
+      ...prev,
+      collectionIds: prev.collectionIds.includes(id)
+        ? prev.collectionIds.filter((x) => x !== id)
+        : [...prev.collectionIds, id],
+    }));
 
   const basePrice = Number(form.price) || 0;
 
@@ -139,6 +179,8 @@ export default function ProductForm({
         stock: Number(form.stock) || 0,
         images: form.images,
         channels: form.channels,
+        tags: form.tags,
+        collectionIds: form.collectionIds,
       };
 
       const res = await fetch(
@@ -477,6 +519,92 @@ export default function ProductForm({
                   </button>
                 );
               })}
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Collections"
+              subtitle="Add this product to one or more collections. Rule-based collections also apply automatically."
+            />
+            {allCollections.length === 0 ? (
+              <p className="mt-3 text-sm text-muted">
+                No collections yet.{" "}
+                <Link href="/portal/collections" className="text-accent hover:underline">
+                  Create one
+                </Link>
+                .
+              </p>
+            ) : (
+              <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                {allCollections.map((c) => {
+                  const on = form.collectionIds.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleCollection(c.id)}
+                      className={cx(
+                        "flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                        on
+                          ? "border-accent bg-accent-subtle text-accent"
+                          : "border-line text-ink-2 hover:bg-subtle",
+                      )}
+                    >
+                      <span className="min-w-0 truncate">
+                        {c.title}
+                        {c.group && (
+                          <span className="ml-1.5 text-xs text-muted">· {c.group}</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-xs">{on ? "Added" : "Add"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Tags"
+              subtitle="Free-text labels for search and rule-based collections."
+            />
+            <div className="mt-3">
+              <Input
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                placeholder="Type a tag, press Enter"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    addTag(tagInput);
+                  } else if (e.key === "Backspace" && !tagInput && form.tags.length) {
+                    removeTag(form.tags[form.tags.length - 1]);
+                  }
+                }}
+                onBlur={() => addTag(tagInput)}
+              />
+              {form.tags.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {form.tags.map((t) => (
+                    <li
+                      key={t}
+                      className="inline-flex items-center gap-1 rounded-md bg-subtle px-2 py-1 text-xs text-ink-2"
+                    >
+                      {t}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${t}`}
+                        onClick={() => removeTag(t)}
+                        className="text-muted hover:text-danger"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </Card>
 
