@@ -1,10 +1,26 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requirePermission } from "@/lib/guard";
 import { invalid } from "@/lib/db";
-import { mergeProducts } from "@/lib/products";
+import { getMergeCandidates, mergeProducts } from "@/lib/products";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Authoritative details for the merge modal (stock, status, invoice-line counts).
+export async function GET(req: Request) {
+  const denied = await requirePermission("inventory");
+  if (denied) return denied;
+
+  try {
+    const ids = (new URL(req.url).searchParams.get("ids") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return NextResponse.json({ candidates: await getMergeCandidates(ids) });
+  } catch (err) {
+    return errorResponse(err, "load these products");
+  }
+}
 
 export async function POST(req: Request) {
   const denied = await requirePermission("inventory");

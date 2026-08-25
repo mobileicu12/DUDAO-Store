@@ -46,20 +46,44 @@ export function MergeModal({
   const [survivorId, setSurvivorId] = useState("");
   const [addStock, setAddStock] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Start from what the caller passed for an instant render, then replace with
+  // authoritative figures (current stock, live invoice-line counts) from the
+  // server — the bulk-select path can't know invoice counts on its own.
+  const [rows, setRows] = useState<MergeCandidate[]>(products);
+  const [loadingInfo, setLoadingInfo] = useState(false);
 
-  // Default the survivor to the row with the most invoice history, then the most
-  // stock — the record most worth keeping — whenever the set of products changes.
   useEffect(() => {
     if (!open || products.length === 0) return;
-    const best = [...products].sort(
-      (a, b) => (b.lineCount ?? 0) - (a.lineCount ?? 0) || b.stock - a.stock,
-    )[0];
-    setSurvivorId((cur) => (products.some((p) => p.id === cur) ? cur : best.id));
+    setRows(products);
     setAddStock(false);
+    let alive = true;
+    setLoadingInfo(true);
+    const ids = products.map((p) => p.id).join(",");
+    fetch(`/api/products/merge?ids=${encodeURIComponent(ids)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { candidates: [] }))
+      .then((d: { candidates?: MergeCandidate[] }) => {
+        if (!alive || !d.candidates?.length) return;
+        setRows(d.candidates);
+      })
+      .catch(() => {})
+      .finally(() => alive && setLoadingInfo(false));
+    return () => {
+      alive = false;
+    };
   }, [open, products]);
 
-  const losers = products.filter((p) => p.id !== survivorId);
-  const survivor = products.find((p) => p.id === survivorId);
+  // Default the survivor to the row with the most invoice history, then the most
+  // stock — the record most worth keeping — once authoritative figures land.
+  useEffect(() => {
+    if (rows.length === 0) return;
+    const best = [...rows].sort(
+      (a, b) => (b.lineCount ?? 0) - (a.lineCount ?? 0) || b.stock - a.stock,
+    )[0];
+    setSurvivorId((cur) => (rows.some((p) => p.id === cur) ? cur : best.id));
+  }, [rows]);
+
+  const losers = rows.filter((p) => p.id !== survivorId);
+  const survivor = rows.find((p) => p.id === survivorId);
   const lostStock = losers.reduce((s, p) => s + p.stock, 0);
   const movedLines = losers.reduce((s, p) => s + (p.lineCount ?? 0), 0);
 
@@ -93,7 +117,7 @@ export function MergeModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Merge ${products.length} products`}
+      title={`Merge ${rows.length} products`}
       size="md"
       dismissable={!busy}
       footer={
@@ -104,7 +128,7 @@ export function MergeModal({
           <Button
             variant="danger"
             loading={busy}
-            disabled={!survivor || losers.length === 0}
+            disabled={!survivor || losers.length === 0 || loadingInfo}
             onClick={merge}
           >
             Merge into “{survivor?.title ?? "…"}”
@@ -119,7 +143,7 @@ export function MergeModal({
       </p>
 
       <div className="space-y-2">
-        {products.map((p) => {
+        {rows.map((p) => {
           const keep = p.id === survivorId;
           return (
             <button
@@ -176,9 +200,11 @@ export function MergeModal({
       {losers.length > 0 && (
         <div className="mt-4 space-y-2 rounded-lg border border-line bg-subtle p-3 text-xs text-muted">
           <p>
-            {movedLines > 0
-              ? `${movedLines} invoice line${movedLines === 1 ? "" : "s"} will move to the kept product.`
-              : "No invoice history to move."}
+            {loadingInfo
+              ? "Checking invoice history…"
+              : movedLines > 0
+                ? `${movedLines} invoice line${movedLines === 1 ? "" : "s"} will move to the kept product.`
+                : "No invoice history to move."}
           </p>
           {lostStock > 0 && (
             <Checkbox

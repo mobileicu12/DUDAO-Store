@@ -666,6 +666,8 @@ export type MergeResult = {
   collectionsAdded: number;
   imagesMoved: number;
   stockAdded: number;
+  /** Names of the survivor's empty fields that were filled from the merged records. */
+  backfilled: string[];
 };
 
 /**
@@ -689,26 +691,59 @@ export async function mergeProducts(
     throw invalid("Pick at least one other product to merge into the survivor.");
   }
 
+  // Everything the merge reads or backfills, so a merge preserves data instead
+  // of dropping whatever the survivor happened to be missing.
+  const mergeSelect = {
+    id: true,
+    tags: true,
+    stock: true,
+    title: true,
+    sku: true,
+    barcode: true,
+    brand: true,
+    model: true,
+    vendor: true,
+    productType: true,
+    descriptionHtml: true,
+    compareAtPrice: true,
+    priceWholesale: true,
+    priceShop: true,
+    priceEbay: true,
+    priceAmazon: true,
+    collections: { select: { collectionId: true } },
+    images: { orderBy: { position: "asc" as const }, select: { id: true } },
+  };
+
   const [survivor, others] = await Promise.all([
-    db.product.findUnique({
-      where: { id: survivorId },
-      select: { id: true, tags: true, stock: true, images: { select: { id: true } } },
-    }),
-    db.product.findMany({
-      where: { id: { in: losers } },
-      select: {
-        id: true,
-        tags: true,
-        stock: true,
-        sku: true,
-        title: true,
-        collections: { select: { collectionId: true } },
-        images: { orderBy: { position: "asc" }, select: { id: true } },
-      },
-    }),
+    db.product.findUnique({ where: { id: survivorId }, select: mergeSelect }),
+    db.product.findMany({ where: { id: { in: losers } }, select: mergeSelect }),
   ]);
   if (!survivor) throw notFound("product");
   if (others.length === 0) throw notFound("product");
+
+  // Order the merged records by the caller's mergedIds, so "the first one that
+  // has a value" is predictable when backfilling the survivor's empty fields.
+  const orderedOthers = losers
+    .map((id) => others.find((o) => o.id === id))
+    .filter((o): o is (typeof others)[number] => o != null);
+
+  const firstText = (key: "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml"): string | undefined => {
+    if ((survivor[key] ?? "").trim()) return undefined; // survivor already has one
+    for (const o of orderedOthers) {
+      const v = (o[key] ?? "").trim();
+      if (v) return v;
+    }
+    return undefined;
+  };
+  const firstDecimal = (
+    key: "compareAtPrice" | "priceWholesale" | "priceShop" | "priceEbay" | "priceAmazon",
+  ): Prisma.Decimal | undefined => {
+    if (survivor[key] != null) return undefined; // survivor already has one
+    for (const o of orderedOthers) {
+      if (o[key] != null) return o[key] as Prisma.Decimal;
+    }
+    return undefined;
+  };
 
   const result = await db.$transaction(async (tx) => {
     // 1. Move invoice history onto the survivor. Snapshots keep old bills intact.
@@ -719,7 +754,7 @@ export async function mergeProducts(
 
     // 2. Union collection memberships onto the survivor.
     const collIds = [
-      ...new Set(others.flatMap((o) => o.collections.map((c) => c.collectionId))),
+      ...new Set(orderedOthers.flatMap((o) => o.collections.map((c) => c.collectionId))),
     ];
     let collectionsAdded = 0;
     if (collIds.length) {
@@ -733,7 +768,7 @@ export async function mergeProducts(
     // 3. Adopt images only if the survivor has none, so a good photo isn't lost.
     let imagesMoved = 0;
     if (survivor.images.length === 0) {
-      const donor = others.find((o) => o.images.length > 0);
+      const donor = orderedOthers.find((o) => o.images.length > 0);
       if (donor) {
         const r = await tx.productImage.updateMany({
           where: { id: { in: donor.images.map((i) => i.id) } },
@@ -743,26 +778,50 @@ export async function mergeProducts(
       }
     }
 
-    // 4. Union tags; optionally roll the others' stock into the survivor.
-    const tags = [...new Set([...survivor.tags, ...others.flatMap((o) => o.tags)])];
-    const stockAdded = opts.addStock ? others.reduce((s, o) => s + o.stock, 0) : 0;
+    // 4. Union tags, backfill the survivor's empty fields from the merged
+    //    records, and optionally roll the others' stock into the survivor.
+    const tags = [...new Set([...survivor.tags, ...orderedOthers.flatMap((o) => o.tags)])];
+    const stockAdded = opts.addStock ? orderedOthers.reduce((s, o) => s + o.stock, 0) : 0;
+
+    const filled: Prisma.ProductUpdateInput = {};
+    const setStr = (
+      k: "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml",
+    ) => {
+      const v = firstText(k);
+      if (v !== undefined) (filled as Record<string, unknown>)[k] = v;
+    };
+    const setDec = (
+      k: "compareAtPrice" | "priceWholesale" | "priceShop" | "priceEbay" | "priceAmazon",
+    ) => {
+      const v = firstDecimal(k);
+      if (v !== undefined) (filled as Record<string, unknown>)[k] = v;
+    };
+    (["sku", "barcode", "brand", "model", "vendor", "productType", "descriptionHtml"] as const).forEach(setStr);
+    (["compareAtPrice", "priceWholesale", "priceShop", "priceEbay", "priceAmazon"] as const).forEach(setDec);
+    const backfilled = Object.keys(filled);
+
     await tx.product.update({
       where: { id: survivorId },
-      data: { tags, ...(stockAdded ? { stock: survivor.stock + stockAdded } : {}) },
+      data: { tags, ...filled, ...(stockAdded ? { stock: survivor.stock + stockAdded } : {}) },
     });
 
     // 5. Delete the losers — cascades any leftover images and collection rows.
     await tx.product.deleteMany({ where: { id: { in: losers } } });
 
-    return { linesMoved: lines.count, collectionsAdded, imagesMoved, stockAdded };
+    return { linesMoved: lines.count, collectionsAdded, imagesMoved, stockAdded, backfilled };
   });
 
   await audit("product.merge", {
     ref: survivorId,
-    detail: `Merged ${others.length} product${others.length === 1 ? "" : "s"} in; ${result.linesMoved} invoice line${result.linesMoved === 1 ? "" : "s"} moved.`,
+    detail:
+      `Merged ${orderedOthers.length} product${orderedOthers.length === 1 ? "" : "s"} in; ` +
+      `${result.linesMoved} invoice line${result.linesMoved === 1 ? "" : "s"} moved` +
+      (result.stockAdded ? `; +${result.stockAdded} stock` : "") +
+      (result.backfilled.length ? `; filled ${result.backfilled.join(", ")}` : "") +
+      ".",
     data: {
       survivorId,
-      merged: others.map((o) => ({ id: o.id, title: o.title, sku: o.sku })),
+      merged: orderedOthers.map((o) => ({ id: o.id, title: o.title, sku: o.sku })),
       ...result,
     },
   }).catch(() => {});
@@ -770,7 +829,43 @@ export async function mergeProducts(
   // The survivor's unioned tags may now satisfy a rule-based collection.
   await applySmartRules([survivorId]).catch(() => {});
 
-  return { survivorId, mergedCount: others.length, ...result };
+  return { survivorId, mergedCount: orderedOthers.length, ...result };
+}
+
+/**
+ * Authoritative merge information for a set of products — current stock, status,
+ * price, image and the live count of invoice lines referencing each. The merge
+ * modal fetches this so it never shows a stale figure or, worse, claims "no
+ * invoice history" for a product that in fact appears on past bills.
+ */
+export async function getMergeCandidates(ids: string[]): Promise<DuplicateMember[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const rows = await db.product.findMany({
+    where: { id: { in: unique } },
+    select: {
+      id: true,
+      title: true,
+      sku: true,
+      barcode: true,
+      stock: true,
+      price: true,
+      status: true,
+      images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
+      _count: { select: { lines: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    sku: r.sku,
+    barcode: r.barcode,
+    stock: r.stock,
+    price: num(r.price),
+    status: r.status,
+    imageUrl: r.images[0]?.url ?? null,
+    lineCount: r._count.lines,
+  }));
 }
 
 /* -------------------------------------------------------------------------- */
