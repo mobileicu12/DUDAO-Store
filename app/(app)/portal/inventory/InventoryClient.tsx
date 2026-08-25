@@ -31,6 +31,7 @@ import {
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { useToast } from "@/components/ui/Toast";
+import { MergeModal, DuplicatesModal } from "./MergeTools";
 
 type ColKey =
   | "product"
@@ -81,6 +82,8 @@ export default function InventoryClient() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkPrompt, setBulkPrompt] = useState<"price" | "stock" | null>(null);
   const [bulkValue, setBulkValue] = useState("");
@@ -314,6 +317,9 @@ export default function InventoryClient() {
         }
         actions={
           <>
+            <Button variant="secondary" onClick={() => setDupOpen(true)}>
+              Find duplicates
+            </Button>
             <Link href="/portal/import-export">
               <Button variant="secondary">Import / export</Button>
             </Link>
@@ -613,6 +619,15 @@ export default function InventoryClient() {
               >
                 Print labels
               </Button>
+              {selected.size >= 2 && (
+                <Button
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => setMergeOpen(true)}
+                >
+                  Merge…
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="danger"
@@ -735,6 +750,34 @@ export default function InventoryClient() {
           />
         </div>
       </Modal>
+
+      <MergeModal
+        open={mergeOpen}
+        products={products
+          .filter((p) => selected.has(p.id))
+          .map((p) => ({
+            id: p.id,
+            title: p.title,
+            sku: p.sku,
+            barcode: p.barcode,
+            stock: p.stock,
+            price: p.price,
+            status: p.status,
+            imageUrl: p.imageUrl,
+          }))}
+        onClose={() => setMergeOpen(false)}
+        onMerged={() => {
+          setMergeOpen(false);
+          setSelected(new Set());
+          void loadAll();
+        }}
+      />
+
+      <DuplicatesModal
+        open={dupOpen}
+        onClose={() => setDupOpen(false)}
+        onMerged={() => void loadAll()}
+      />
     </div>
   );
 }
