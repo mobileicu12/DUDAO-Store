@@ -572,6 +572,8 @@ export type DuplicateMember = {
   imageUrl: string | null;
   /** How many invoice lines reference this product — history that a merge keeps. */
   lineCount: number;
+  /** When the product was created — drives the Newest/Oldest hints at merge time. */
+  createdAt: string;
 };
 
 export type DuplicateGroup = {
@@ -601,6 +603,7 @@ export async function findDuplicateGroups(): Promise<DuplicateGroup[]> {
       stock: true,
       price: true,
       status: true,
+      createdAt: true,
       images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
       _count: { select: { lines: true } },
     },
@@ -617,6 +620,7 @@ export async function findDuplicateGroups(): Promise<DuplicateGroup[]> {
     status: r.status,
     imageUrl: r.images[0]?.url ?? null,
     lineCount: r._count.lines,
+    createdAt: r.createdAt.toISOString(),
   });
 
   const bySku = new Map<string, Row[]>();
@@ -666,8 +670,10 @@ export type MergeResult = {
   collectionsAdded: number;
   imagesMoved: number;
   stockAdded: number;
-  /** Names of the survivor's empty fields that were filled from the merged records. */
-  backfilled: string[];
+  /** The product whose details (price, name, SKU…) were applied to the survivor. */
+  detailsFrom: string;
+  /** Field names whose value changed on the survivor as a result of the merge. */
+  updatedFields: string[];
 };
 
 /**
@@ -675,21 +681,34 @@ export type MergeResult = {
  * are deleted. Because an invoice line snapshots its own title and price, moving
  * a line to the survivor keeps every past bill printing exactly as it did.
  *
- * What transfers: invoice-line history (re-pointed), collection memberships and
- * tags (unioned), and — only when the survivor has none of its own — the images
- * of the first merged product that has any. Stock stays the survivor's unless
- * `addStock` is set, in which case the others' stock is rolled in. All in one
- * transaction, so a failure leaves nothing half-merged.
+ * Two independent choices:
+ *  - `survivorId` — which record REMAINS (keeps its id, so all its invoice
+ *    history and links stay intact).
+ *  - `detailsFrom` — which record's DETAILS win (name, price, tiers, SKU,
+ *    barcode, brand, …). Defaults to the survivor. Set it to a merged product
+ *    to keep, say, the latest record's price while still keeping the older
+ *    record's history. Fields are resolved by priority: the details source
+ *    first, then the survivor, then the other merged records — the first
+ *    non-empty value wins, so nothing gets blanked out.
+ *
+ * Also transfers: collection memberships and tags (unioned) and — only when the
+ * survivor has no image — the first merged product's images. Stock stays the
+ * survivor's unless `addStock` rolls the others' in. All in one transaction.
  */
 export async function mergeProducts(
   survivorId: string,
   mergedIds: string[],
-  opts: { addStock?: boolean } = {},
+  opts: { addStock?: boolean; detailsFrom?: string } = {},
 ): Promise<MergeResult> {
   const losers = [...new Set(mergedIds)].filter((id) => id !== survivorId);
   if (losers.length === 0) {
     throw invalid("Pick at least one other product to merge into the survivor.");
   }
+  // The details source must be one of the products in the merge.
+  const detailsFrom =
+    opts.detailsFrom && (opts.detailsFrom === survivorId || losers.includes(opts.detailsFrom))
+      ? opts.detailsFrom
+      : survivorId;
 
   // Everything the merge reads or backfills, so a merge preserves data instead
   // of dropping whatever the survivor happened to be missing.
@@ -705,6 +724,7 @@ export async function mergeProducts(
     vendor: true,
     productType: true,
     descriptionHtml: true,
+    price: true,
     compareAtPrice: true,
     priceWholesale: true,
     priceShop: true,
@@ -721,29 +741,40 @@ export async function mergeProducts(
   if (!survivor) throw notFound("product");
   if (others.length === 0) throw notFound("product");
 
-  // Order the merged records by the caller's mergedIds, so "the first one that
-  // has a value" is predictable when backfilling the survivor's empty fields.
+  // Order the merged records by the caller's mergedIds, so field resolution is
+  // deterministic.
   const orderedOthers = losers
     .map((id) => others.find((o) => o.id === id))
     .filter((o): o is (typeof others)[number] => o != null);
 
-  const firstText = (key: "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml"): string | undefined => {
-    if ((survivor[key] ?? "").trim()) return undefined; // survivor already has one
-    for (const o of orderedOthers) {
-      const v = (o[key] ?? "").trim();
+  // Field resolution priority: the details source first, then the survivor, then
+  // the remaining merged records. The first non-empty value wins, so choosing a
+  // merged record as the details source overrides the survivor where it has a
+  // value, but never blanks a field the source left empty.
+  type Rec = typeof survivor;
+  const all: Rec[] = [survivor, ...orderedOthers];
+  const source = all.find((p) => p.id === detailsFrom) ?? survivor;
+  const priority: Rec[] = [source, ...all.filter((p) => p.id !== detailsFrom)];
+
+  const pickText = (
+    key: "title" | "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml",
+  ): string => {
+    for (const p of priority) {
+      const v = (p[key] ?? "").trim();
       if (v) return v;
     }
-    return undefined;
+    return "";
   };
-  const firstDecimal = (
+  const pickDecimal = (
     key: "compareAtPrice" | "priceWholesale" | "priceShop" | "priceEbay" | "priceAmazon",
-  ): Prisma.Decimal | undefined => {
-    if (survivor[key] != null) return undefined; // survivor already has one
-    for (const o of orderedOthers) {
-      if (o[key] != null) return o[key] as Prisma.Decimal;
+  ): Prisma.Decimal | null => {
+    for (const p of priority) {
+      if (p[key] != null) return p[key] as Prisma.Decimal;
     }
-    return undefined;
+    return null;
   };
+  const sameDec = (a: Prisma.Decimal | null, b: Prisma.Decimal | null) =>
+    (a == null && b == null) || (a != null && b != null && Number(a) === Number(b));
 
   const result = await db.$transaction(async (tx) => {
     // 1. Move invoice history onto the survivor. Snapshots keep old bills intact.
@@ -778,37 +809,44 @@ export async function mergeProducts(
       }
     }
 
-    // 4. Union tags, backfill the survivor's empty fields from the merged
-    //    records, and optionally roll the others' stock into the survivor.
+    // 4. Union tags; apply the resolved details to the survivor (this is where a
+    //    chosen details source's price/name/SKU wins); optionally roll in stock.
     const tags = [...new Set([...survivor.tags, ...orderedOthers.flatMap((o) => o.tags)])];
     const stockAdded = opts.addStock ? orderedOthers.reduce((s, o) => s + o.stock, 0) : 0;
 
-    const filled: Prisma.ProductUpdateInput = {};
-    const setStr = (
-      k: "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml",
-    ) => {
-      const v = firstText(k);
-      if (v !== undefined) (filled as Record<string, unknown>)[k] = v;
-    };
-    const setDec = (
-      k: "compareAtPrice" | "priceWholesale" | "priceShop" | "priceEbay" | "priceAmazon",
-    ) => {
-      const v = firstDecimal(k);
-      if (v !== undefined) (filled as Record<string, unknown>)[k] = v;
-    };
-    (["sku", "barcode", "brand", "model", "vendor", "productType", "descriptionHtml"] as const).forEach(setStr);
-    (["compareAtPrice", "priceWholesale", "priceShop", "priceEbay", "priceAmazon"] as const).forEach(setDec);
-    const backfilled = Object.keys(filled);
+    const data: Prisma.ProductUpdateInput = { tags };
+    const updatedFields: string[] = [];
 
-    await tx.product.update({
-      where: { id: survivorId },
-      data: { tags, ...filled, ...(stockAdded ? { stock: survivor.stock + stockAdded } : {}) },
-    });
+    const TEXT = ["title", "sku", "barcode", "brand", "model", "vendor", "productType", "descriptionHtml"] as const;
+    for (const k of TEXT) {
+      const v = pickText(k);
+      if (v !== (survivor[k] ?? "")) {
+        (data as Record<string, unknown>)[k] = v;
+        updatedFields.push(k);
+      }
+    }
+    // Base price is required, so it always resolves to the source's price.
+    const price = priority[0].price;
+    if (!sameDec(price, survivor.price)) {
+      data.price = price;
+      updatedFields.push("price");
+    }
+    const DEC = ["compareAtPrice", "priceWholesale", "priceShop", "priceEbay", "priceAmazon"] as const;
+    for (const k of DEC) {
+      const v = pickDecimal(k);
+      if (!sameDec(v, survivor[k])) {
+        (data as Record<string, unknown>)[k] = v;
+        updatedFields.push(k);
+      }
+    }
+    if (stockAdded) data.stock = survivor.stock + stockAdded;
+
+    await tx.product.update({ where: { id: survivorId }, data });
 
     // 5. Delete the losers — cascades any leftover images and collection rows.
     await tx.product.deleteMany({ where: { id: { in: losers } } });
 
-    return { linesMoved: lines.count, collectionsAdded, imagesMoved, stockAdded, backfilled };
+    return { linesMoved: lines.count, collectionsAdded, imagesMoved, stockAdded, updatedFields };
   });
 
   await audit("product.merge", {
@@ -816,11 +854,13 @@ export async function mergeProducts(
     detail:
       `Merged ${orderedOthers.length} product${orderedOthers.length === 1 ? "" : "s"} in; ` +
       `${result.linesMoved} invoice line${result.linesMoved === 1 ? "" : "s"} moved` +
+      (detailsFrom !== survivorId ? "; kept the other record's details" : "") +
       (result.stockAdded ? `; +${result.stockAdded} stock` : "") +
-      (result.backfilled.length ? `; filled ${result.backfilled.join(", ")}` : "") +
+      (result.updatedFields.length ? `; updated ${result.updatedFields.join(", ")}` : "") +
       ".",
     data: {
       survivorId,
+      detailsFrom,
       merged: orderedOthers.map((o) => ({ id: o.id, title: o.title, sku: o.sku })),
       ...result,
     },
@@ -829,7 +869,59 @@ export async function mergeProducts(
   // The survivor's unioned tags may now satisfy a rule-based collection.
   await applySmartRules([survivorId]).catch(() => {});
 
-  return { survivorId, mergedCount: orderedOthers.length, ...result };
+  return { survivorId, mergedCount: orderedOthers.length, detailsFrom, ...result };
+}
+
+export type BatchMergeResult = {
+  groupsMerged: number;
+  productsRemoved: number;
+  linesMoved: number;
+};
+
+/**
+ * Merge every duplicate group in one pass, keeping the newest or the oldest
+ * record of each and folding the rest in. The kept record is also the details
+ * source, so "keep newest" keeps the latest details — the common case after
+ * re-adding a product with updated pricing.
+ *
+ * Groups can overlap (a product may share a SKU with one and a name with
+ * another), so already-merged products are tracked and skipped rather than
+ * re-scanning after every merge. A group that drops below two live members is
+ * left alone.
+ */
+export async function mergeDuplicatesAuto(
+  strategy: "newest" | "oldest",
+  opts: { addStock?: boolean } = {},
+): Promise<BatchMergeResult> {
+  const groups = await findDuplicateGroups();
+  const gone = new Set<string>();
+  let groupsMerged = 0;
+  let productsRemoved = 0;
+  let linesMoved = 0;
+
+  for (const g of groups) {
+    const live = g.members.filter((m) => !gone.has(m.id));
+    if (live.length < 2) continue;
+
+    const sorted = [...live].sort((a, b) =>
+      strategy === "newest"
+        ? +new Date(b.createdAt) - +new Date(a.createdAt)
+        : +new Date(a.createdAt) - +new Date(b.createdAt),
+    );
+    const survivor = sorted[0];
+    const mergedIds = sorted.slice(1).map((m) => m.id);
+
+    const res = await mergeProducts(survivor.id, mergedIds, {
+      addStock: opts.addStock,
+      detailsFrom: survivor.id,
+    });
+    groupsMerged++;
+    productsRemoved += mergedIds.length;
+    linesMoved += res.linesMoved;
+    for (const id of mergedIds) gone.add(id);
+  }
+
+  return { groupsMerged, productsRemoved, linesMoved };
 }
 
 /**
@@ -851,6 +943,7 @@ export async function getMergeCandidates(ids: string[]): Promise<DuplicateMember
       stock: true,
       price: true,
       status: true,
+      createdAt: true,
       images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
       _count: { select: { lines: true } },
     },
@@ -865,6 +958,7 @@ export async function getMergeCandidates(ids: string[]): Promise<DuplicateMember
     status: r.status,
     imageUrl: r.images[0]?.url ?? null,
     lineCount: r._count.lines,
+    createdAt: r.createdAt.toISOString(),
   }));
 }
 

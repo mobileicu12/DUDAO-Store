@@ -25,7 +25,13 @@ export type MergeCandidate = {
   status: string;
   imageUrl?: string | null;
   lineCount?: number;
+  createdAt?: string;
 };
+
+const shortDate = (iso?: string) =>
+  iso
+    ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+    : "";
 
 /* -------------------------------------------------------------------------- */
 /* Merge modal — pick the survivor, the rest fold in                          */
@@ -44,6 +50,7 @@ export function MergeModal({
 }) {
   const toast = useToast();
   const [survivorId, setSurvivorId] = useState("");
+  const [detailsFromId, setDetailsFromId] = useState("");
   const [addStock, setAddStock] = useState(false);
   const [busy, setBusy] = useState(false);
   // Start from what the caller passed for an instant render, then replace with
@@ -82,8 +89,23 @@ export function MergeModal({
     setSurvivorId((cur) => (rows.some((p) => p.id === cur) ? cur : best.id));
   }, [rows]);
 
+  // The details source follows the survivor unless the user picks another. When
+  // the survivor changes, snap the details source back to it.
+  useEffect(() => {
+    if (survivorId) setDetailsFromId(survivorId);
+  }, [survivorId]);
+
+  // Age hints — which record is the most/least recently added.
+  const { newestId, oldestId } = useMemo(() => {
+    const dated = rows.filter((r) => r.createdAt);
+    if (dated.length < 2) return { newestId: "", oldestId: "" };
+    const sorted = [...dated].sort((a, b) => +new Date(a.createdAt!) - +new Date(b.createdAt!));
+    return { oldestId: sorted[0].id, newestId: sorted[sorted.length - 1].id };
+  }, [rows]);
+
   const losers = rows.filter((p) => p.id !== survivorId);
   const survivor = rows.find((p) => p.id === survivorId);
+  const detailsSource = rows.find((p) => p.id === detailsFromId) ?? survivor;
   const lostStock = losers.reduce((s, p) => s + p.stock, 0);
   const movedLines = losers.reduce((s, p) => s + (p.lineCount ?? 0), 0);
 
@@ -98,6 +120,7 @@ export function MergeModal({
           survivorId,
           mergedIds: losers.map((p) => p.id),
           addStock,
+          detailsFrom: detailsFromId,
         }),
       });
       const body = await res.json();
@@ -179,12 +202,15 @@ export function MergeModal({
                 </span>
               )}
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-ink">
-                  {p.title}
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-medium text-ink">{p.title}</span>
+                  {p.id === newestId && <Badge tone="info">Newest</Badge>}
+                  {p.id === oldestId && <Badge tone="neutral">Oldest</Badge>}
                 </span>
                 <span className="block text-xs text-muted">
                   {p.sku || "no SKU"} · {money(p.price)} · {p.stock} in stock
                   {p.lineCount ? ` · ${p.lineCount} on invoices` : ""}
+                  {p.createdAt ? ` · added ${shortDate(p.createdAt)}` : ""}
                 </span>
               </span>
               {keep ? (
@@ -196,6 +222,33 @@ export function MergeModal({
           );
         })}
       </div>
+
+      {/* Whose details win — defaults to the kept product, but you can take, say,
+          the newest record's price while still keeping the older one's history. */}
+      {rows.length > 1 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line p-2.5 text-sm">
+          <span className="text-muted">Use details (name, price, SKU…) from:</span>
+          <select
+            value={detailsFromId}
+            onChange={(e) => setDetailsFromId(e.target.value)}
+            className="h-8 rounded-md border border-line-strong bg-surface px-2 text-sm text-ink"
+          >
+            {rows.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.id === survivorId ? "The kept product" : "Removed"}
+                {p.id === newestId ? " · newest" : p.id === oldestId ? " · oldest" : ""}
+                {` · ${money(p.price)}`}
+              </option>
+            ))}
+          </select>
+          {detailsSource && survivor && detailsSource.id !== survivor.id && (
+            <span className="text-xs text-warning">
+              Kept product’s details will be replaced with {detailsSource.title}’s
+              {detailsSource.price !== survivor.price ? ` (price → ${money(detailsSource.price)})` : ""}.
+            </span>
+          )}
+        </div>
+      )}
 
       {losers.length > 0 && (
         <div className="mt-4 space-y-2 rounded-lg border border-line bg-subtle p-3 text-xs text-muted">
@@ -239,6 +292,8 @@ export function DuplicatesModal({
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [mergeGroup, setMergeGroup] = useState<DuplicateMember[] | null>(null);
+  const [strategy, setStrategy] = useState<"newest" | "oldest">("newest");
+  const [batchBusy, setBatchBusy] = useState(false);
 
   const load = useMemo(
     () => async () => {
@@ -260,6 +315,35 @@ export function DuplicatesModal({
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+
+  const totalDupes = groups.reduce((s, g) => s + (g.members.length - 1), 0);
+
+  const mergeAll = async () => {
+    const ok = window.confirm(
+      `Merge all ${groups.length} groups, keeping the ${strategy} product in each and removing the other ${totalDupes}? ` +
+        `The kept product's details win (so "newest" keeps the latest details). Invoice history is preserved. This cannot be undone.`,
+    );
+    if (!ok) return;
+    setBatchBusy(true);
+    try {
+      const res = await fetch("/api/products/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ strategy }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "The batch merge did not go through.");
+      toast.success(
+        `Merged ${body.groupsMerged} group${body.groupsMerged === 1 ? "" : "s"}, removed ${body.productsRemoved} duplicate${body.productsRemoved === 1 ? "" : "s"}.`,
+      );
+      onMerged();
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
 
   return (
     <>
@@ -287,8 +371,32 @@ export function DuplicatesModal({
           <div className="space-y-3">
             <p className="text-sm text-muted">
               {groups.length} group{groups.length === 1 ? "" : "s"} of products look
-              alike. Review each and merge the ones that are the same item.
+              alike. Merge each below, or resolve them all at once.
             </p>
+
+            {/* Batch: resolve every group in one go, no clicking through each. */}
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent-subtle px-3 py-2 text-sm">
+              <span className="font-medium text-ink">Merge all — keep the</span>
+              <select
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value as "newest" | "oldest")}
+                className="h-8 rounded-md border border-line-strong bg-surface px-2 text-sm text-ink"
+              >
+                <option value="newest">newest (latest details)</option>
+                <option value="oldest">oldest</option>
+              </select>
+              <span className="text-muted">of each</span>
+              <Button
+                size="sm"
+                variant="primary"
+                loading={batchBusy}
+                onClick={mergeAll}
+                className="ml-auto"
+              >
+                Merge all {groups.length} groups
+              </Button>
+            </div>
+
             {groups.map((g, i) => (
               <div key={i} className="rounded-lg border border-line bg-surface p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -306,15 +414,26 @@ export function DuplicatesModal({
                   </Button>
                 </div>
                 <ul className="divide-y divide-line text-sm">
-                  {g.members.map((m) => (
-                    <li key={m.id} className="flex items-center gap-2 py-1.5">
-                      <span className="min-w-0 flex-1 truncate text-ink">{m.title}</span>
-                      <span className="shrink-0 text-xs text-muted">
-                        {m.sku || "no SKU"} · {m.stock} in stock
-                        {m.lineCount ? ` · ${m.lineCount} on invoices` : ""}
-                      </span>
-                    </li>
-                  ))}
+                  {(() => {
+                    const byAge = [...g.members]
+                      .filter((m) => m.createdAt)
+                      .sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
+                    const oldest = byAge[0]?.id;
+                    const newest = byAge[byAge.length - 1]?.id;
+                    return g.members.map((m) => (
+                      <li key={m.id} className="flex items-center gap-2 py-1.5">
+                        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <span className="truncate text-ink">{m.title}</span>
+                          {byAge.length > 1 && m.id === newest && <Badge tone="info">Newest</Badge>}
+                          {byAge.length > 1 && m.id === oldest && <Badge tone="neutral">Oldest</Badge>}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted">
+                          {m.sku || "no SKU"} · {money(m.price)} · {m.stock} in stock
+                          {m.lineCount ? ` · ${m.lineCount} on invoices` : ""}
+                        </span>
+                      </li>
+                    ));
+                  })()}
                 </ul>
               </div>
             ))}
