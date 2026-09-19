@@ -6,7 +6,7 @@ import { assembleStatement } from "@/lib/statement-build";
 import { statementPdfBuffer } from "@/lib/statement-pdf";
 import { businessForDocs } from "@/lib/doc-business";
 import { sendEmail, emailConfigured, emailShell } from "@/lib/email";
-import { sendWhatsApp, waConfigured } from "@/lib/whatsapp";
+import { sendWhatsApp, waConfigured, waRedirectUrl } from "@/lib/whatsapp";
 import { statementSharePath, absoluteUrl } from "@/lib/invoice-link";
 
 export const runtime = "nodejs";
@@ -41,13 +41,20 @@ export async function POST(req: Request, { params }: Ctx) {
     );
 
     if (channel === "whatsapp") {
-      if (!(await waConfigured())) throw invalid("WhatsApp is not set up.");
       if (!customer.phone) throw invalid("This customer has no phone number.");
-      const res = await sendWhatsApp(
-        customer.phone,
-        `${business.name}: your account statement. Balance ${business.currency} ${customer.outstanding.toFixed(2)}. View: ${link}`,
-        [customer.name, `${business.currency} ${customer.outstanding.toFixed(2)}`, link],
-      );
+      const text = `${business.name}: your account statement. Balance ${business.currency} ${customer.outstanding.toFixed(2)}. View: ${link}`;
+      // No Cloud API configured → hand back a wa.me link so the client opens
+      // WhatsApp directly with the message prefilled (no credentials needed).
+      if (!(await waConfigured())) {
+        const redirect = waRedirectUrl(customer.phone, text);
+        if (!redirect) throw invalid("This customer has no valid phone number.");
+        return NextResponse.json({ ok: true, redirect });
+      }
+      const res = await sendWhatsApp(customer.phone, text, [
+        customer.name,
+        `${business.currency} ${customer.outstanding.toFixed(2)}`,
+        link,
+      ]);
       if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
       return NextResponse.json({ ok: true });
     }

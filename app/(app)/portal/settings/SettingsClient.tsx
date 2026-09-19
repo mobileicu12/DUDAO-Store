@@ -156,19 +156,27 @@ export default function SettingsClient() {
       const res = await fetch("/api/cron/backup-drive", { method: "POST" });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
+        offsite?: boolean;
+        r2?: { key: string } | null;
+        r2Error?: string | null;
         drive?: { file: string } | null;
         driveError?: string | null;
       };
       if (!res.ok) throw new Error(body.error ?? "The backup did not run.");
-      if (body.drive) {
-        toast.success("Backup saved.", "Stored in the database and Google Drive.");
-      } else if (body.driveError) {
+      const offsiteOk = body.r2 || body.drive;
+      const offsiteErr = body.r2Error || body.driveError;
+      if (offsiteOk) {
+        toast.success("Backup saved.", "Stored in the database and off-site storage.");
+      } else if (offsiteErr) {
         toast.success(
           "Backup saved to the database.",
-          "Google Drive upload failed — its token may have expired. See the note below.",
+          `Off-site copy failed: ${offsiteErr}`,
         );
       } else {
-        toast.success("Backup saved.", "Stored in the database. (Google Drive isn't set up yet.)");
+        toast.success(
+          "Backup saved.",
+          "Stored in the database. (Off-site storage isn't set up yet — see the note below.)",
+        );
       }
     } catch (e) {
       toast.error((e as Error).message);
@@ -190,7 +198,7 @@ export default function SettingsClient() {
       return;
     }
     const typed = window.prompt(
-      "Restore will REPLACE all current products, customers, invoices and the ledger with the contents of this backup. This cannot be undone (a pre-restore copy is saved to Drive if configured).\n\nType RESTORE to confirm:",
+      "Restore will REPLACE all current products, customers, invoices and the ledger with the contents of this backup. This cannot be undone (a pre-restore copy is saved off-site if configured).\n\nType RESTORE to confirm:",
     );
     if (typed !== "RESTORE") {
       if (typed !== null) toast.error("Restore cancelled — you didn't type RESTORE.");
@@ -385,8 +393,10 @@ export default function SettingsClient() {
             </Alert>
           ) : (
             <Alert tone="neutral">
-              Add your Meta Cloud API token and phone number ID to send invoices
-              over WhatsApp.
+              WhatsApp already works without this: sending opens WhatsApp with the
+              message and link prefilled, ready to send by hand. Add a Meta Cloud
+              API token and phone number ID only if you want messages to go out
+              automatically, with no tab to open.
             </Alert>
           )}
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -500,13 +510,15 @@ export default function SettingsClient() {
             <div className="mt-3 flex flex-wrap gap-2">
               <Button onClick={backup}>Download full backup</Button>
               <Button variant="secondary" loading={driveBusy} onClick={backupToDrive}>
-                Back up now (database + Drive)
+                Back up now (database + off-site)
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted">
-              A dated snapshot is also saved to your Google Drive automatically
-              every night. The last 7 daily backups are kept, so you always have
-              the last few days and a roughly week-old copy.
+              A dated snapshot is saved automatically every night — always into
+              this database, and off-site to Cloudflare R2 storage once it's set
+              up (a static access key that never expires, so it keeps working
+              without you touching it). The last 30 nightly copies are kept
+              off-site.
             </p>
 
             <div className="mt-4 border-t border-line pt-4">
@@ -514,7 +526,7 @@ export default function SettingsClient() {
               <p className="mt-1 text-xs text-muted">
                 Replaces everything with the contents of a backup file. Use this
                 only to recover from a mistake or data loss — the current data is
-                copied to Drive first so a wrong restore can be undone.
+                copied off-site first so a wrong restore can be undone.
               </p>
               <label className="mt-3 inline-flex">
                 <input
