@@ -132,6 +132,8 @@ export type ImportRowResult = {
   changes?: string[];
   /** On a preview, the collections this product would end up in. */
   collections?: string[];
+  /** On a preview, a note that a new row looks like an existing product. */
+  duplicateOf?: string;
 };
 
 export type ImportSummary = {
@@ -468,14 +470,31 @@ export async function importCatalog(
       if (changes.length) updated++;
       else skipped++;
     }
+    // Flag create-rows that collide with an existing product on SKU or name, so
+    // an accidental re-import is spotted before it makes duplicates. Warn only —
+    // the row still creates; staff decide what to do with the flag.
+    const existingSku = new Map<string, string>();
+    const existingTitle = new Map<string, string>();
+    if (toCreate.length) {
+      const all = await db.product.findMany({ select: { title: true, sku: true } });
+      for (const r of all) {
+        if (r.sku.trim()) existingSku.set(r.sku.trim().toLowerCase(), r.title);
+        existingTitle.set(r.title.toLowerCase().replace(/\s+/g, " ").trim(), r.title);
+      }
+    }
+
     for (const c of toCreate) {
       const cols = collectionsFor(c.p);
+      const sku = (c.p.data.sku ?? "").trim().toLowerCase();
+      const nt = c.p.title.toLowerCase().replace(/\s+/g, " ").trim();
+      const dupOf = (sku && existingSku.get(sku)) || existingTitle.get(nt) || undefined;
       results.push({
         row: c.p.row,
         title: c.p.title,
         ok: true,
         action: "created",
         collections: cols.length ? cols : undefined,
+        duplicateOf: dupOf,
       });
       created++;
     }

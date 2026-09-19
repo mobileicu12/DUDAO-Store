@@ -43,8 +43,8 @@ export default function TapInPage() {
           Tap in to start your shift
         </h1>
         <p className="mt-1 text-sm text-muted">
-          Re-enter your password to clock in. You&apos;ll be clocked out
-          automatically at 9:30&nbsp;pm.
+          Re-enter your password to clock in. If you forget to tap out, you&apos;ll
+          be clocked out automatically at the end of the day.
         </p>
 
         {error && (

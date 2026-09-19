@@ -90,6 +90,9 @@ export default function TodaySendDrawer() {
         const b = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error ?? "That message did not send.");
       }
+      const body = (await res.json().catch(() => ({}))) as { redirect?: string };
+      // No WhatsApp API → open WhatsApp directly with the message prefilled.
+      if (body.redirect) window.open(body.redirect, "_blank");
       markSent(c.id, channel);
       setSent(loadSent());
       toast.success(`Sent to ${c.name} by ${channel}.`);

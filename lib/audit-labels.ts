@@ -34,6 +34,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "buying.delete": "Buying cost removed",
   "finance.grant": "Finance access granted",
   "finance.revoke": "Finance access revoked",
+  "product.merge": "Products merged",
 };
 
 // Actions that change money and should stand out in the log.

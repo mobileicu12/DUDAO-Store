@@ -12,6 +12,7 @@ import {
 import { channelsFromTags, withChannels, type ChannelKey } from "./channels";
 import { applySmartRules } from "./collections";
 import { tierNum, type TierPrices } from "./pricing";
+import { audit } from "./audit";
 
 /**
  * Product reads and writes. Everything the inventory grid, the product editor,
@@ -554,6 +555,411 @@ export async function assignBarcodes(
   );
 
   return { changed: targets.length };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Duplicate detection & merge                                                */
+/* -------------------------------------------------------------------------- */
+
+export type DuplicateMember = {
+  id: string;
+  title: string;
+  sku: string;
+  barcode: string;
+  stock: number;
+  price: number;
+  status: string;
+  imageUrl: string | null;
+  /** How many invoice lines reference this product — history that a merge keeps. */
+  lineCount: number;
+  /** When the product was created — drives the Newest/Oldest hints at merge time. */
+  createdAt: string;
+};
+
+export type DuplicateGroup = {
+  /** Why these were grouped: an identical SKU, or an identical name. */
+  reason: "sku" | "title";
+  key: string;
+  members: DuplicateMember[];
+};
+
+const normTitle = (t: string): string => t.toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * Find sets of products that look like duplicates of each other: two or more
+ * sharing a (non-empty) SKU, or an identical name once case and spacing are
+ * ignored. SKU groups come first as the stronger signal; a title group whose
+ * exact membership is already covered by a SKU group is dropped so a pair that
+ * matches on both isn't listed twice.
+ */
+export async function findDuplicateGroups(): Promise<DuplicateGroup[]> {
+  const rows = await db.product.findMany({
+    orderBy: { title: "asc" },
+    select: {
+      id: true,
+      title: true,
+      sku: true,
+      barcode: true,
+      stock: true,
+      price: true,
+      status: true,
+      createdAt: true,
+      images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
+      _count: { select: { lines: true } },
+    },
+  });
+
+  type Row = (typeof rows)[number];
+  const toMember = (r: Row): DuplicateMember => ({
+    id: r.id,
+    title: r.title,
+    sku: r.sku,
+    barcode: r.barcode,
+    stock: r.stock,
+    price: num(r.price),
+    status: r.status,
+    imageUrl: r.images[0]?.url ?? null,
+    lineCount: r._count.lines,
+    createdAt: r.createdAt.toISOString(),
+  });
+
+  const bySku = new Map<string, Row[]>();
+  const byTitle = new Map<string, Row[]>();
+  const push = (m: Map<string, Row[]>, k: string, r: Row) => {
+    const a = m.get(k);
+    if (a) a.push(r);
+    else m.set(k, [r]);
+  };
+  for (const r of rows) {
+    const sku = r.sku.trim().toLowerCase();
+    if (sku) push(bySku, sku, r);
+    const t = normTitle(r.title);
+    if (t) push(byTitle, t, r);
+  }
+
+  const sig = (list: Row[]) => list.map((r) => r.id).sort().join(",");
+  const seen = new Set<string>();
+  const groups: DuplicateGroup[] = [];
+
+  for (const [key, list] of bySku) {
+    if (list.length < 2) continue;
+    seen.add(sig(list));
+    groups.push({ reason: "sku", key, members: list.map(toMember) });
+  }
+  for (const [key, list] of byTitle) {
+    if (list.length < 2) continue;
+    if (seen.has(sig(list))) continue;
+    groups.push({ reason: "title", key, members: list.map(toMember) });
+  }
+
+  // SKU groups first, then the biggest groups — the worst offenders on top.
+  groups.sort((a, b) =>
+    a.reason === b.reason
+      ? b.members.length - a.members.length
+      : a.reason === "sku"
+        ? -1
+        : 1,
+  );
+  return groups;
+}
+
+export type MergeResult = {
+  survivorId: string;
+  mergedCount: number;
+  linesMoved: number;
+  collectionsAdded: number;
+  imagesMoved: number;
+  stockAdded: number;
+  /** The product whose details (price, name, SKU…) were applied to the survivor. */
+  detailsFrom: string;
+  /** Field names whose value changed on the survivor as a result of the merge. */
+  updatedFields: string[];
+};
+
+/**
+ * Merge `mergedIds` into `survivorId`: the survivor absorbs the others and they
+ * are deleted. Because an invoice line snapshots its own title and price, moving
+ * a line to the survivor keeps every past bill printing exactly as it did.
+ *
+ * Two independent choices:
+ *  - `survivorId` — which record REMAINS (keeps its id, so all its invoice
+ *    history and links stay intact).
+ *  - `detailsFrom` — which record's DETAILS win (name, price, tiers, SKU,
+ *    barcode, brand, …). Defaults to the survivor. Set it to a merged product
+ *    to keep, say, the latest record's price while still keeping the older
+ *    record's history. Fields are resolved by priority: the details source
+ *    first, then the survivor, then the other merged records — the first
+ *    non-empty value wins, so nothing gets blanked out.
+ *
+ * Also transfers: collection memberships and tags (unioned) and — only when the
+ * survivor has no image — the first merged product's images. Stock stays the
+ * survivor's unless `addStock` rolls the others' in. All in one transaction.
+ */
+export async function mergeProducts(
+  survivorId: string,
+  mergedIds: string[],
+  opts: { addStock?: boolean; detailsFrom?: string } = {},
+): Promise<MergeResult> {
+  const losers = [...new Set(mergedIds)].filter((id) => id !== survivorId);
+  if (losers.length === 0) {
+    throw invalid("Pick at least one other product to merge into the survivor.");
+  }
+  // The details source must be one of the products in the merge.
+  const detailsFrom =
+    opts.detailsFrom && (opts.detailsFrom === survivorId || losers.includes(opts.detailsFrom))
+      ? opts.detailsFrom
+      : survivorId;
+
+  // Everything the merge reads or backfills, so a merge preserves data instead
+  // of dropping whatever the survivor happened to be missing.
+  const mergeSelect = {
+    id: true,
+    tags: true,
+    stock: true,
+    title: true,
+    sku: true,
+    barcode: true,
+    brand: true,
+    model: true,
+    vendor: true,
+    productType: true,
+    descriptionHtml: true,
+    price: true,
+    compareAtPrice: true,
+    priceWholesale: true,
+    priceShop: true,
+    priceEbay: true,
+    priceAmazon: true,
+    collections: { select: { collectionId: true } },
+    images: { orderBy: { position: "asc" as const }, select: { id: true } },
+  };
+
+  const [survivor, others] = await Promise.all([
+    db.product.findUnique({ where: { id: survivorId }, select: mergeSelect }),
+    db.product.findMany({ where: { id: { in: losers } }, select: mergeSelect }),
+  ]);
+  if (!survivor) throw notFound("product");
+  if (others.length === 0) throw notFound("product");
+
+  // Order the merged records by the caller's mergedIds, so field resolution is
+  // deterministic.
+  const orderedOthers = losers
+    .map((id) => others.find((o) => o.id === id))
+    .filter((o): o is (typeof others)[number] => o != null);
+
+  // Field resolution priority: the details source first, then the survivor, then
+  // the remaining merged records. The first non-empty value wins, so choosing a
+  // merged record as the details source overrides the survivor where it has a
+  // value, but never blanks a field the source left empty.
+  type Rec = typeof survivor;
+  const all: Rec[] = [survivor, ...orderedOthers];
+  const source = all.find((p) => p.id === detailsFrom) ?? survivor;
+  const priority: Rec[] = [source, ...all.filter((p) => p.id !== detailsFrom)];
+
+  const pickText = (
+    key: "title" | "sku" | "barcode" | "brand" | "model" | "vendor" | "productType" | "descriptionHtml",
+  ): string => {
+    for (const p of priority) {
+      const v = (p[key] ?? "").trim();
+      if (v) return v;
+    }
+    return "";
+  };
+  const pickDecimal = (
+    key: "compareAtPrice" | "priceWholesale" | "priceShop" | "priceEbay" | "priceAmazon",
+  ): Prisma.Decimal | null => {
+    for (const p of priority) {
+      if (p[key] != null) return p[key] as Prisma.Decimal;
+    }
+    return null;
+  };
+  const sameDec = (a: Prisma.Decimal | null, b: Prisma.Decimal | null) =>
+    (a == null && b == null) || (a != null && b != null && Number(a) === Number(b));
+
+  const result = await db.$transaction(async (tx) => {
+    // 1. Move invoice history onto the survivor. Snapshots keep old bills intact.
+    const lines = await tx.invoiceLine.updateMany({
+      where: { productId: { in: losers } },
+      data: { productId: survivorId },
+    });
+
+    // 2. Union collection memberships onto the survivor.
+    const collIds = [
+      ...new Set(orderedOthers.flatMap((o) => o.collections.map((c) => c.collectionId))),
+    ];
+    let collectionsAdded = 0;
+    if (collIds.length) {
+      const r = await tx.collectionProduct.createMany({
+        data: collIds.map((collectionId) => ({ collectionId, productId: survivorId })),
+        skipDuplicates: true,
+      });
+      collectionsAdded = r.count;
+    }
+
+    // 3. Adopt images only if the survivor has none, so a good photo isn't lost.
+    let imagesMoved = 0;
+    if (survivor.images.length === 0) {
+      const donor = orderedOthers.find((o) => o.images.length > 0);
+      if (donor) {
+        const r = await tx.productImage.updateMany({
+          where: { id: { in: donor.images.map((i) => i.id) } },
+          data: { productId: survivorId },
+        });
+        imagesMoved = r.count;
+      }
+    }
+
+    // 4. Union tags; apply the resolved details to the survivor (this is where a
+    //    chosen details source's price/name/SKU wins); optionally roll in stock.
+    const tags = [...new Set([...survivor.tags, ...orderedOthers.flatMap((o) => o.tags)])];
+    const stockAdded = opts.addStock ? orderedOthers.reduce((s, o) => s + o.stock, 0) : 0;
+
+    const data: Prisma.ProductUpdateInput = { tags };
+    const updatedFields: string[] = [];
+
+    const TEXT = ["title", "sku", "barcode", "brand", "model", "vendor", "productType", "descriptionHtml"] as const;
+    for (const k of TEXT) {
+      const v = pickText(k);
+      if (v !== (survivor[k] ?? "")) {
+        (data as Record<string, unknown>)[k] = v;
+        updatedFields.push(k);
+      }
+    }
+    // Base price is required, so it always resolves to the source's price.
+    const price = priority[0].price;
+    if (!sameDec(price, survivor.price)) {
+      data.price = price;
+      updatedFields.push("price");
+    }
+    const DEC = ["compareAtPrice", "priceWholesale", "priceShop", "priceEbay", "priceAmazon"] as const;
+    for (const k of DEC) {
+      const v = pickDecimal(k);
+      if (!sameDec(v, survivor[k])) {
+        (data as Record<string, unknown>)[k] = v;
+        updatedFields.push(k);
+      }
+    }
+    if (stockAdded) data.stock = survivor.stock + stockAdded;
+
+    await tx.product.update({ where: { id: survivorId }, data });
+
+    // 5. Delete the losers — cascades any leftover images and collection rows.
+    await tx.product.deleteMany({ where: { id: { in: losers } } });
+
+    return { linesMoved: lines.count, collectionsAdded, imagesMoved, stockAdded, updatedFields };
+  });
+
+  await audit("product.merge", {
+    ref: survivorId,
+    detail:
+      `Merged ${orderedOthers.length} product${orderedOthers.length === 1 ? "" : "s"} in; ` +
+      `${result.linesMoved} invoice line${result.linesMoved === 1 ? "" : "s"} moved` +
+      (detailsFrom !== survivorId ? "; kept the other record's details" : "") +
+      (result.stockAdded ? `; +${result.stockAdded} stock` : "") +
+      (result.updatedFields.length ? `; updated ${result.updatedFields.join(", ")}` : "") +
+      ".",
+    data: {
+      survivorId,
+      detailsFrom,
+      merged: orderedOthers.map((o) => ({ id: o.id, title: o.title, sku: o.sku })),
+      ...result,
+    },
+  }).catch(() => {});
+
+  // The survivor's unioned tags may now satisfy a rule-based collection.
+  await applySmartRules([survivorId]).catch(() => {});
+
+  return { survivorId, mergedCount: orderedOthers.length, detailsFrom, ...result };
+}
+
+export type BatchMergeResult = {
+  groupsMerged: number;
+  productsRemoved: number;
+  linesMoved: number;
+};
+
+/**
+ * Merge every duplicate group in one pass, keeping the newest or the oldest
+ * record of each and folding the rest in. The kept record is also the details
+ * source, so "keep newest" keeps the latest details — the common case after
+ * re-adding a product with updated pricing.
+ *
+ * Groups can overlap (a product may share a SKU with one and a name with
+ * another), so already-merged products are tracked and skipped rather than
+ * re-scanning after every merge. A group that drops below two live members is
+ * left alone.
+ */
+export async function mergeDuplicatesAuto(
+  strategy: "newest" | "oldest",
+  opts: { addStock?: boolean } = {},
+): Promise<BatchMergeResult> {
+  const groups = await findDuplicateGroups();
+  const gone = new Set<string>();
+  let groupsMerged = 0;
+  let productsRemoved = 0;
+  let linesMoved = 0;
+
+  for (const g of groups) {
+    const live = g.members.filter((m) => !gone.has(m.id));
+    if (live.length < 2) continue;
+
+    const sorted = [...live].sort((a, b) =>
+      strategy === "newest"
+        ? +new Date(b.createdAt) - +new Date(a.createdAt)
+        : +new Date(a.createdAt) - +new Date(b.createdAt),
+    );
+    const survivor = sorted[0];
+    const mergedIds = sorted.slice(1).map((m) => m.id);
+
+    const res = await mergeProducts(survivor.id, mergedIds, {
+      addStock: opts.addStock,
+      detailsFrom: survivor.id,
+    });
+    groupsMerged++;
+    productsRemoved += mergedIds.length;
+    linesMoved += res.linesMoved;
+    for (const id of mergedIds) gone.add(id);
+  }
+
+  return { groupsMerged, productsRemoved, linesMoved };
+}
+
+/**
+ * Authoritative merge information for a set of products — current stock, status,
+ * price, image and the live count of invoice lines referencing each. The merge
+ * modal fetches this so it never shows a stale figure or, worse, claims "no
+ * invoice history" for a product that in fact appears on past bills.
+ */
+export async function getMergeCandidates(ids: string[]): Promise<DuplicateMember[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const rows = await db.product.findMany({
+    where: { id: { in: unique } },
+    select: {
+      id: true,
+      title: true,
+      sku: true,
+      barcode: true,
+      stock: true,
+      price: true,
+      status: true,
+      createdAt: true,
+      images: { orderBy: { position: "asc" }, take: 1, select: { url: true } },
+      _count: { select: { lines: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    sku: r.sku,
+    barcode: r.barcode,
+    stock: r.stock,
+    price: num(r.price),
+    status: r.status,
+    imageUrl: r.images[0]?.url ?? null,
+    lineCount: r._count.lines,
+    createdAt: r.createdAt.toISOString(),
+  }));
 }
 
 /* -------------------------------------------------------------------------- */

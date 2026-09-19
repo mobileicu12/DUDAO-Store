@@ -36,6 +36,19 @@ export function normalizePhone(raw: string): string | null {
   return s || null;
 }
 
+/**
+ * A wa.me click-to-chat URL — the no-API fallback.
+ *
+ * When the Cloud API isn't set up, this is how a message still "sends": it opens
+ * WhatsApp (app or web) with the recipient and text prefilled, ready for the
+ * staff member to hit send by hand. Returns null if the number is unusable.
+ */
+export function waRedirectUrl(rawPhone: string, message: string): string | null {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return null;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
 export async function sendWhatsApp(
   to: string,
   message: string,

@@ -384,6 +384,16 @@ export default function ImportExportClient() {
                             ))}
                           </span>
                         )}
+                        {r.duplicateOf && (
+                          <span className="mt-1 flex items-center gap-1">
+                            <span
+                              className="rounded bg-warning-subtle px-1.5 py-0.5 text-[0.7rem] text-warning"
+                              title="A product with this SKU or name already exists. This row will still create a new product — merge them afterwards from Inventory if it's the same item."
+                            >
+                              ⚠ Possible duplicate of “{r.duplicateOf}”
+                            </span>
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

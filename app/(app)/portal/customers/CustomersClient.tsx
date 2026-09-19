@@ -100,6 +100,7 @@ export default function CustomersClient() {
     let emails = 0;
     let whats = 0;
     let fails = 0;
+    const waLinks: string[] = [];
     for (const c of targets) {
       if (c.email) {
         try {
@@ -120,15 +121,26 @@ export default function CustomersClient() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ channel: "whatsapp" }),
           });
-          if (r.ok) whats++;
+          if (r.ok) {
+            const body = (await r.json().catch(() => ({}))) as { redirect?: string };
+            // No WhatsApp API: collect wa.me links to open after the loop.
+            if (body.redirect) waLinks.push(body.redirect);
+            else whats++;
+          }
         } catch {
           /* WhatsApp is best-effort */
         }
       }
     }
     setSendingToday(false);
+    // Open each prefilled WhatsApp chat (no-API mode). Staggered so the browser
+    // doesn't treat the burst as a popup flood; the operator sends each by hand.
+    waLinks.forEach((url, i) => setTimeout(() => window.open(url, "_blank"), i * 400));
+    const manual = waLinks.length
+      ? `, ${waLinks.length} WhatsApp chat${waLinks.length === 1 ? "" : "s"} opened to send`
+      : "";
     toast.success(
-      `Done — ${emails} email${emails === 1 ? "" : "s"}, ${whats} WhatsApp${whats === 1 ? "" : "s"}${fails ? `, ${fails} failed` : ""} across ${targets.length} customer${targets.length === 1 ? "" : "s"}.`,
+      `Done — ${emails} email${emails === 1 ? "" : "s"}, ${whats} WhatsApp${whats === 1 ? "" : "s"}${manual}${fails ? `, ${fails} failed` : ""} across ${targets.length} customer${targets.length === 1 ? "" : "s"}.`,
     );
   };
 

@@ -23,6 +23,7 @@ import {
   StatCard,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
+import { Pagination } from "@/components/ui/Pagination";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -75,6 +76,8 @@ export default function ExpensesClient() {
   const [period, setPeriod] = useState<Period>("1m");
   const [cat, setCat] = useState("all");
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Add form
   const [fCat, setFCat] = useState(EXPENSE_CATEGORIES[0]);
@@ -123,6 +126,16 @@ export default function ExpensesClient() {
       return true;
     });
   }, [rows, period, cat, q]);
+
+  // Reset to the first page whenever a filter narrows or widens the list.
+  useEffect(() => {
+    setPage(1);
+  }, [period, cat, q]);
+
+  const pageRows = useMemo(
+    () => shown.slice((page - 1) * pageSize, page * pageSize),
+    [shown, page, pageSize],
+  );
 
   const total = shown.reduce((s, r) => s + r.amount, 0);
   const cashTotal = shown
@@ -332,7 +345,7 @@ export default function ExpensesClient() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map((r) => (
+                {pageRows.map((r) => (
                   <tr key={r.id} className="border-b border-line last:border-0">
                     <td className="px-3 py-2.5 text-muted">
                       {new Date(r.date).toLocaleDateString("en-GB")}
@@ -362,6 +375,16 @@ export default function ExpensesClient() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {!loading && shown.length > 0 && (
+          <Pagination
+            total={shown.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setPageSize}
+          />
         )}
       </Card>
     </div>

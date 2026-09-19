@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requireAnyPermission, requirePermission } from "@/lib/guard";
-import { autoOrganise, createCollection, listCollections } from "@/lib/collections";
+import {
+  autoGroupCollections,
+  autoOrganise,
+  createCollection,
+  listCollections,
+  setCollectionGroup,
+} from "@/lib/collections";
 import { invalid } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -30,10 +36,23 @@ export async function POST(req: Request) {
       descriptionHtml?: string;
       smartRule?: string;
       group?: string;
+      ids?: string[];
     };
 
     if (body.action === "organize") {
       return NextResponse.json(await autoOrganise());
+    }
+
+    if (body.action === "auto-group") {
+      return NextResponse.json(await autoGroupCollections());
+    }
+
+    if (body.action === "set-group") {
+      if (!Array.isArray(body.ids) || body.ids.length === 0) {
+        throw invalid("Pick the collections to group first.");
+      }
+      const updated = await setCollectionGroup(body.ids, body.group ?? "");
+      return NextResponse.json({ updated });
     }
 
     if (!body.title) throw invalid("Give the collection a name.");

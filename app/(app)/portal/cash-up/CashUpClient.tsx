@@ -237,8 +237,8 @@ export default function CashUpClient() {
   const num = "rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent";
 
   return (
-    <div className="px-8 py-7 pb-16">
-      <div className="sticky top-0 z-20 -mx-8 mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-bg/95 px-8 py-3 backdrop-blur">
+    <div className="pb-4">
+      <div className="sticky top-0 z-20 -mx-4 mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <div>
           <h1 className="text-2xl font-semibold text-ink">Cash-up</h1>
           <p className="text-sm text-muted">Enter the day by hand, then check it against the portal.</p>
@@ -252,8 +252,8 @@ export default function CashUpClient() {
         </div>
       </div>
 
-      {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
-      {flash && <p className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{flash}</p>}
+      {error && <p className="mb-4 rounded-lg bg-danger-subtle px-4 py-3 text-sm text-danger">{error}</p>}
+      {flash && <p className="mb-4 rounded-lg bg-success-subtle px-4 py-3 text-sm font-medium text-success">{flash}</p>}
       {savedAt && !flash && (
         <p className="mb-4 rounded-lg border border-line bg-subtle px-4 py-2.5 text-xs text-muted">
           Saved by <strong className="text-ink">{savedAt.by}</strong> at {new Date(savedAt.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}. Saving again replaces it.
@@ -275,7 +275,7 @@ export default function CashUpClient() {
                     <select className={`${num} w-28`} value={l.method} onChange={(e) => setLine("customerLines", i, { method: e.target.value })}>
                       {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
                     </select>
-                    <button onClick={() => removeLine("customerLines", i)} className="px-1 text-muted hover:text-red-600" title="Remove">✕</button>
+                    <button onClick={() => removeLine("customerLines", i)} className="px-1 text-muted hover:text-danger" title="Remove">✕</button>
                   </div>
                 ))}
               </div>
@@ -295,7 +295,7 @@ export default function CashUpClient() {
                         key={i}
                         onClick={() => addSuggestion(s)}
                         title={`Add ${s.name} — ${gbp(s.amount)} ${s.method}`}
-                        className="rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink transition hover:border-accent hover:text-accent dark:bg-neutral-900"
+                        className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition hover:border-accent hover:text-accent"
                       >
                         + {s.name} <span className="text-muted">· {gbp(s.amount)} · {s.method}</span>
                       </button>
@@ -345,7 +345,7 @@ export default function CashUpClient() {
                     <select className={`${num} w-32`} value={l.method} onChange={(e) => setLine("expenseLines", i, { method: e.target.value })}>
                       {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
                     </select>
-                    <button onClick={() => removeLine("expenseLines", i)} className="px-1 text-muted hover:text-red-600" title="Remove">✕</button>
+                    <button onClick={() => removeLine("expenseLines", i)} className="px-1 text-muted hover:text-danger" title="Remove">✕</button>
                   </div>
                 ))}
               </div>
@@ -375,14 +375,14 @@ export default function CashUpClient() {
                           <td className="py-2 text-muted">{d.label}</td>
                           <td className="py-2 text-right text-ink">{gbp(d.sheet)}</td>
                           <td className="py-2 text-right text-ink">{gbp(d.sys)}</td>
-                          <td className={`py-2 text-right font-semibold ${off ? "text-red-600" : "text-emerald-600"}`}>{off ? gbp(gap) : "—"}</td>
+                          <td className={`py-2 text-right font-semibold ${off ? "text-danger" : "text-success"}`}>{off ? gbp(gap) : "—"}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-              <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${anyDrift ? "bg-red-500/10 text-red-600" : "bg-emerald-500/10 text-emerald-700"}`}>
+              <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${anyDrift ? "bg-danger-subtle text-danger" : "bg-success-subtle text-success"}`}>
                 {anyDrift
                   ? "⚠ Your sheet and the portal disagree. Check today's invoices before closing — one side has a payment the other doesn't."
                   : prefilled.size > 0
@@ -418,7 +418,7 @@ export default function CashUpClient() {
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-muted">{gbp(r.sheet)}</td>
                           <td className="px-3 py-2 text-right tabular-nums text-muted">{gbp(r.portal)}</td>
-                          <td className={`px-3 py-2 text-right font-semibold tabular-nums ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
+                          <td className={`px-3 py-2 text-right font-semibold tabular-nums ${r.diff < 0 ? "text-danger" : "text-warning"}`}>
                             {r.diff > 0 ? "+" : "−"}{gbp(Math.abs(r.diff))}
                           </td>
                         </tr>
@@ -434,7 +434,7 @@ export default function CashUpClient() {
               {/* A copied figure agrees with the portal by construction. Saying so
                   keeps a green tick from being read as more assurance than it is. */}
               {prefilled.size > 0 && (
-                <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+                <p className="mt-2 rounded-lg bg-warning-subtle px-3 py-2 text-xs text-warning">
                   {gbp(prefilledTotal)} across {prefilled.size} line{prefilled.size > 1 ? "s" : ""} was copied from the portal, not counted. This check only vouches for the {gbp(t.fromCustomers - prefilledTotal)} you typed. Overwrite an amount to make it count.
                 </p>
               )}
@@ -480,10 +480,10 @@ export default function CashUpClient() {
               <Row label="+ Cash taken today" value={t.byMethod.cash} />
               <Row label="− Cash expenses" value={-t.cashExpenses} />
               <Total label="Expected in drawer" value={expectedCash} />
-              <div className={`mt-3 rounded-xl px-4 py-3 ${balanced ? "bg-emerald-500/10" : "bg-red-500/10"}`}>
+              <div className={`mt-3 rounded-xl px-4 py-3 ${balanced ? "bg-success-subtle" : "bg-danger-subtle"}`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className={`text-sm font-medium ${balanced ? "text-emerald-700" : "text-red-600"}`}>Counted {gbp(sheet.countedCash)}</span>
-                  <span className={`text-lg font-bold ${balanced ? "text-emerald-700" : "text-red-600"}`}>
+                  <span className={`text-sm font-medium ${balanced ? "text-success" : "text-danger"}`}>Counted {gbp(sheet.countedCash)}</span>
+                  <span className={`text-lg font-bold ${balanced ? "text-success" : "text-danger"}`}>
                     {balanced ? "Balances" : `${variance > 0 ? "Over" : "Short"} ${gbp(Math.abs(variance))}`}
                   </span>
                 </div>

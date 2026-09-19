@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requireAnyPermission } from "@/lib/guard";
 import { invalid } from "@/lib/db";
-import { sendWhatsApp, waConfigured } from "@/lib/whatsapp";
+import { sendWhatsApp, waConfigured, waRedirectUrl } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,10 +12,6 @@ export async function POST(req: Request) {
   if (denied) return denied;
 
   try {
-    if (!(await waConfigured())) {
-      throw invalid("WhatsApp is not set up. Add credentials in Settings.");
-    }
-
     const { to, message, params } = (await req.json()) as {
       to?: string;
       message?: string;
@@ -23,6 +19,13 @@ export async function POST(req: Request) {
     };
     if (!to) throw invalid("No phone number for this recipient.");
     if (!message) throw invalid("Nothing to send.");
+
+    // No Cloud API → hand back a wa.me link the client opens directly.
+    if (!(await waConfigured())) {
+      const redirect = waRedirectUrl(to, message);
+      if (!redirect) throw invalid("No valid phone number for this recipient.");
+      return NextResponse.json({ ok: true, redirect });
+    }
 
     const result = await sendWhatsApp(to, message, params);
     if (!result.ok) {

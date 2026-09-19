@@ -144,7 +144,17 @@ export default function CustomerDetailClient({ id }: { id: string }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ channel, ...opts }),
         });
-        if (res.ok) done.push(channel === "email" ? "email" : "WhatsApp");
+        if (res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { redirect?: string };
+          // No WhatsApp API → the server hands back a wa.me link; open WhatsApp
+          // directly with the message prefilled.
+          if (body.redirect) {
+            window.open(body.redirect, "_blank");
+            done.push("WhatsApp");
+          } else {
+            done.push(channel === "email" ? "email" : "WhatsApp");
+          }
+        }
       }
       toast.success(
         done.length
