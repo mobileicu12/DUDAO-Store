@@ -10,6 +10,7 @@ import {
   type PaymentMethod,
 } from "@/lib/billing-shared";
 import { segmentDef } from "@/lib/segments";
+import { waLink } from "@/lib/wa-link";
 import type { InvoiceRecord } from "@/lib/billing";
 import type { ProductRecord } from "@/lib/products";
 import {
@@ -245,13 +246,14 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
   const seg = segmentDef(invoice.segment);
 
   // WhatsApp click-to-send: opens WhatsApp with a prefilled message and the
-  // customer's public invoice link. No API credentials needed.
+  // customer's public invoice link. No API credentials needed. When there's no
+  // number on file, WhatsApp opens its contact picker — never a dead button.
   const custName = invoice.customer?.name || invoice.walkInName || "";
-  const custPhone = (invoice.customer?.phone || invoice.walkInPhone || "").replace(/[^0-9]/g, "");
+  const custPhone = invoice.customer?.phone || invoice.walkInPhone || "";
   const balanceDue = invoice.totals.balance;
   const absShare = shareUrl ? (typeof window !== "undefined" ? window.location.origin + shareUrl : shareUrl) : "";
   const waText = `Hi ${custName || "there"}, here is your invoice ${invoice.number} from ${BUSINESS.name} — total ${money(invoice.totals.total)}${balanceDue > 0.001 ? ` (${money(balanceDue)} due)` : " (paid)"}.${absShare ? ` View / download it here: ${absShare}` : ""}`;
-  const waUrl = custPhone ? `https://wa.me/${custPhone}?text=${encodeURIComponent(waText)}` : null;
+  const waUrl = waLink(custPhone, waText);
 
   return (
     <div>
@@ -293,20 +295,14 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
         actions={
           <>
             <Button onClick={() => setPreview(true)}>Preview / PDF</Button>
-            {waUrl ? (
-              <a href={waUrl} target="_blank" rel="noreferrer">
-                <Button className="border-success/40 text-success hover:bg-success-subtle">
-                  WhatsApp
-                </Button>
-              </a>
-            ) : (
+            <a href={waUrl} target="_blank" rel="noreferrer">
               <Button
-                disabled
-                title="Add a phone number to this customer to enable WhatsApp"
+                className="border-success/40 text-success hover:bg-success-subtle"
+                title={custPhone ? "Send on WhatsApp" : "Opens WhatsApp — pick a contact to send to"}
               >
                 WhatsApp
               </Button>
-            )}
+            </a>
             <Button onClick={sendEmail} loading={sending}>
               Email
             </Button>

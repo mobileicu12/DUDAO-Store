@@ -1,5 +1,8 @@
 import "server-only";
 import { getIntegrations } from "./settings";
+import { normalizePhone, waLink } from "./wa-link";
+
+export { normalizePhone, waLink };
 
 /**
  * WhatsApp via the Meta Cloud API.
@@ -13,40 +16,20 @@ import { getIntegrations } from "./settings";
  * the customer messaged first. Either way the failure is returned, never thrown.
  */
 
-const COUNTRY_CODE = process.env.NEXT_PUBLIC_WA_COUNTRY_CODE ?? "44";
-
 export async function waConfigured(): Promise<boolean> {
   const i = await getIntegrations();
   return Boolean(i.whatsappToken && i.whatsappPhoneId);
 }
 
 /**
- * Best-effort E.164. Handles +, 00 and a leading national 0, defaulting to the
- * configured country code. A number that is already international is left as is.
- */
-export function normalizePhone(raw: string): string | null {
-  if (!raw) return null;
-  let s = raw.replace(/[^\d+]/g, "");
-
-  if (s.startsWith("+")) return s.slice(1) || null;
-  if (s.startsWith("00")) return s.slice(2) || null;
-  if (s.startsWith("0")) return COUNTRY_CODE + s.slice(1);
-  // A bare number with no prefix is assumed national.
-  if (s.length > 0 && !s.startsWith(COUNTRY_CODE)) return COUNTRY_CODE + s;
-  return s || null;
-}
-
-/**
  * A wa.me click-to-chat URL — the no-API fallback.
  *
  * When the Cloud API isn't set up, this is how a message still "sends": it opens
- * WhatsApp (app or web) with the recipient and text prefilled, ready for the
- * staff member to hit send by hand. Returns null if the number is unusable.
+ * WhatsApp with the text prefilled, ready to send by hand — to the given
+ * contact, or (if there's no usable number) to whoever staff pick.
  */
-export function waRedirectUrl(rawPhone: string, message: string): string | null {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) return null;
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+export function waRedirectUrl(rawPhone: string | null | undefined, message: string): string {
+  return waLink(rawPhone, message);
 }
 
 export async function sendWhatsApp(
