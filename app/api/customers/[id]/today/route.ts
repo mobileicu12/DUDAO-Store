@@ -55,22 +55,20 @@ export async function POST(req: Request, { params }: Ctx) {
     const link = absoluteUrl(statementSharePath(id, today));
 
     if (channel === "whatsapp") {
-      if (!customer.phone) throw invalid("This customer has no phone number.");
       const text = `${business.name}: your day summary. Balance ${business.currency} ${customer.outstanding.toFixed(2)}. Statement: ${link}`;
-      // No Cloud API configured → hand back a wa.me link so the client opens
-      // WhatsApp directly with the message prefilled (no credentials needed).
-      if (!(await waConfigured())) {
-        const redirect = waRedirectUrl(customer.phone, text);
-        if (!redirect) throw invalid("This customer has no valid phone number.");
-        return NextResponse.json({ ok: true, redirect });
+      // Auto-send only when the Cloud API is set up AND we have a number for it.
+      if ((await waConfigured()) && customer.phone) {
+        const res = await sendWhatsApp(customer.phone, text, [
+          customer.name,
+          `${business.currency} ${customer.outstanding.toFixed(2)}`,
+          link,
+        ]);
+        if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
+        return NextResponse.json({ ok: true });
       }
-      const res = await sendWhatsApp(customer.phone, text, [
-        customer.name,
-        `${business.currency} ${customer.outstanding.toFixed(2)}`,
-        link,
-      ]);
-      if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
-      return NextResponse.json({ ok: true });
+      // Otherwise hand back a wa.me link — opens WhatsApp with the message
+      // prefilled (to this contact, or the picker when there's no number).
+      return NextResponse.json({ ok: true, redirect: waRedirectUrl(customer.phone, text) });
     }
 
     // Email, with the itemised day PDF attached.
