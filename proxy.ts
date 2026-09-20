@@ -29,6 +29,7 @@ const PUBLIC_PREFIXES = [
   "/api/me",
   "/api/cron",
   "/api/public",
+  "/p", // customer-facing invoice/statement share pages (token-gated themselves)
   "/shop",
   "/api/shop",
 ];

@@ -99,6 +99,7 @@ export default async function InvoiceSharePage({
           </a>
           <a
             href={`${pdf}&dl=1`}
+            download={`${invoice.number}.pdf`}
             className="flex h-11 items-center justify-center rounded-lg bg-accent text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
           >
             Download PDF

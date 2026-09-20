@@ -80,6 +80,7 @@ export default async function StatementSharePage({
           </a>
           <a
             href={`${pdf}&dl=1`}
+            download={`statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`}
             className="flex h-11 items-center justify-center rounded-lg bg-accent text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
           >
             Download PDF
