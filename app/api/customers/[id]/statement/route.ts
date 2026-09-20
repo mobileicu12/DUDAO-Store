@@ -7,7 +7,7 @@ import { statementPdfBuffer } from "@/lib/statement-pdf";
 import { businessForDocs } from "@/lib/doc-business";
 import { sendEmail, emailConfigured, emailShell } from "@/lib/email";
 import { sendWhatsApp, waConfigured, waRedirectUrl } from "@/lib/whatsapp";
-import { statementSharePath, absoluteUrl } from "@/lib/invoice-link";
+import { statementPagePath, absoluteUrl } from "@/lib/invoice-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export async function POST(req: Request, { params }: Ctx) {
     const period = from && to ? { from, to } : null;
     const today = new Date().toISOString().slice(0, 10);
     const link = absoluteUrl(
-      statementSharePath(id, today) + (period ? `&from=${period.from}&to=${period.to}` : ""),
+      statementPagePath(id, today) + (period ? `&from=${period.from}&to=${period.to}` : ""),
     );
 
     if (channel === "whatsapp") {

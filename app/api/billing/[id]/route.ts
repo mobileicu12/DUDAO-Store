@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requirePermission } from "@/lib/guard";
 import { deleteInvoice, getInvoice, updateInvoice } from "@/lib/billing";
-import { invoiceSharePath } from "@/lib/invoice-link";
+import { invoicePagePath } from "@/lib/invoice-link";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -22,8 +22,9 @@ export async function GET(_req: Request, { params }: Ctx) {
         { status: 404 },
       );
     }
-    // A signed public link staff can hand to the customer (WhatsApp / email).
-    return NextResponse.json({ ...invoice, shareUrl: invoiceSharePath(invoice.id) });
+    // A signed public link staff can hand to the customer (WhatsApp / email) —
+    // the landing page with View / Download PDF buttons.
+    return NextResponse.json({ ...invoice, shareUrl: invoicePagePath(invoice.id) });
   } catch (err) {
     return errorResponse(err, "open this invoice");
   }

@@ -93,22 +93,29 @@ export function buildInvoiceDoc(
 
   /* Letterhead ----------------------------------------------------------- */
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(17);
-  doc.setTextColor(INK);
-  doc.text(business.name, MARGIN, y + 2);
+  // Seller identity (name, address, VAT number) appears on VAT invoices only.
+  // A non-VAT invoice is issued WITHOUT our business name / details, and the
+  // title is a plain "INVOICE" rather than "VAT INVOICE".
+  const isVat = invoice.taxable;
 
-  if (business.tagline) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(MUTED);
-    doc.text(business.tagline, MARGIN, y + 7);
+  if (isVat) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(17);
+    doc.setTextColor(INK);
+    doc.text(business.name, MARGIN, y + 2);
+
+    if (business.tagline) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(MUTED);
+      doc.text(business.tagline, MARGIN, y + 7);
+    }
   }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(19);
   doc.setTextColor(ACCENT);
-  doc.text("INVOICE", right, y + 2, { align: "right" });
+  doc.text(isVat ? "VAT INVOICE" : "INVOICE", right, y + 2, { align: "right" });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
@@ -130,19 +137,21 @@ export function buildInvoiceDoc(
 
   doc.setFontSize(7.5);
   doc.setTextColor(MUTED);
-  doc.text("FROM", MARGIN, y);
+  if (isVat) doc.text("FROM", MARGIN, y); // no seller block on non-VAT invoices
   doc.text("BILL TO", MARGIN + colW, y);
   y += 4.5;
 
   doc.setFontSize(9);
   doc.setTextColor(INK);
 
-  const fromLines = [
-    ...business.addressLines,
-    business.phone,
-    business.email,
-    business.taxNumber ? `VAT ${business.taxNumber}` : "",
-  ].filter(Boolean);
+  const fromLines = isVat
+    ? [
+        ...business.addressLines,
+        business.phone,
+        business.email,
+        business.taxNumber ? `VAT ${business.taxNumber}` : "",
+      ].filter(Boolean)
+    : [];
 
   const toLines = [
     invoice.billTo.company,
@@ -152,7 +161,7 @@ export function buildInvoiceDoc(
   ].filter(Boolean) as string[];
 
   doc.setFont("helvetica", "bold");
-  doc.text(business.name, MARGIN, y);
+  if (isVat) doc.text(business.name, MARGIN, y);
   doc.text(invoice.billTo.name || "Walk-in customer", MARGIN + colW, y);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(MUTED);
@@ -228,6 +237,8 @@ export function buildInvoiceDoc(
   }
   if (invoice.taxable) {
     row(`VAT ${invoice.taxRate}%`, fmt(invoice.totals.tax, business.currency));
+  } else {
+    row("VAT", "No VAT");
   }
 
   doc.setDrawColor(HAIRLINE);

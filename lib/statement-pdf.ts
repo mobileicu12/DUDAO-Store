@@ -74,11 +74,12 @@ export function buildStatementDoc(
   const right = PAGE_W - MARGIN;
   let y = MARGIN;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(17);
-  doc.setTextColor(INK);
-  doc.text(business.name, MARGIN, y + 2);
+  // Customer statements are issued WITHOUT seller identity — no business name
+  // or address in the header, only the "STATEMENT" title and the account it's
+  // for. (Matches the reference; `business` is kept for the signature/currency.)
+  void business.name;
 
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(19);
   doc.setTextColor(ACCENT);
   doc.text("STATEMENT", right, y + 2, { align: "right" });
@@ -205,20 +206,8 @@ export function buildStatementDoc(
     owed ? RED : GREEN,
   );
 
-  if (owed && business.bankDetails) {
-    y += 4;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(MUTED);
-    doc.text("HOW TO PAY", MARGIN, y);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(INK);
-    doc.text(
-      doc.splitTextToSize(business.bankDetails, right - MARGIN),
-      MARGIN,
-      y + 4,
-    );
-  }
+  // No "HOW TO PAY" / bank block on statements — the seller's bank account is
+  // seller identity, which statements are issued without (matches the reference).
 
   const pages = doc.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
