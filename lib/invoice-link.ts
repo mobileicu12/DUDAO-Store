@@ -52,6 +52,17 @@ export const invoiceSharePath = (id: string): string =>
 export const statementSharePath = (id: string, date: string): string =>
   `/api/public/statement/${id}?date=${date}&t=${signStatementToken(id, date)}`;
 
+/**
+ * The customer-facing landing PAGE for a shared document — a small page with
+ * "View PDF" and "Download PDF" buttons, so there's always a clear download
+ * option on any device. The raw-PDF *Share paths above back its buttons.
+ */
+export const invoicePagePath = (id: string): string =>
+  `/p/invoice/${id}?t=${signInvoiceToken(id)}`;
+
+export const statementPagePath = (id: string, date: string): string =>
+  `/p/statement/${id}?date=${date}&t=${signStatementToken(id, date)}`;
+
 /** Absolute URL for messages — a relative path is useless in WhatsApp. */
 export function absoluteUrl(path: string): string {
   const base = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");

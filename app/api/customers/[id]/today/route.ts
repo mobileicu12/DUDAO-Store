@@ -6,7 +6,7 @@ import { customerDayPdf } from "@/lib/digest";
 import { businessForDocs } from "@/lib/doc-business";
 import { sendEmail, emailConfigured, emailShell } from "@/lib/email";
 import { sendWhatsApp, waConfigured, waRedirectUrl } from "@/lib/whatsapp";
-import { statementSharePath, absoluteUrl } from "@/lib/invoice-link";
+import { statementPagePath, absoluteUrl } from "@/lib/invoice-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +52,7 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const business = await businessForDocs();
     const today = new Date().toISOString().slice(0, 10);
-    const link = absoluteUrl(statementSharePath(id, today));
+    const link = absoluteUrl(statementPagePath(id, today));
 
     if (channel === "whatsapp") {
       const text = `${business.name}: your day summary. Balance ${business.currency} ${customer.outstanding.toFixed(2)}. Statement: ${link}`;

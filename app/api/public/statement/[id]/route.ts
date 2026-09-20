@@ -24,6 +24,7 @@ export async function GET(
   const url = new URL(req.url);
   const token = url.searchParams.get("t");
   const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+  const download = url.searchParams.get("dl") === "1";
 
   const tokenOk = verifyStatementToken(id, date, token);
   const staffOk = tokenOk ? false : Boolean(await currentCaller());
@@ -51,7 +52,7 @@ export async function GET(
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="statement-${customer.name.replace(/[^a-z0-9]+/gi, "-")}.pdf"`,
       "Cache-Control": "private, no-store",
     },
   });

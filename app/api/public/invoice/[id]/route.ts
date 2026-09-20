@@ -22,7 +22,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const token = new URL(req.url).searchParams.get("t");
+  const reqUrl = new URL(req.url);
+  const token = reqUrl.searchParams.get("t");
+  const download = reqUrl.searchParams.get("dl") === "1";
 
   const tokenOk = verifyInvoiceToken(id, token);
   const staffOk = tokenOk ? false : Boolean(await currentCaller());
@@ -58,9 +60,9 @@ export async function GET(
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      // inline so it opens in the browser rather than dropping into Downloads —
-      // a customer tapping a WhatsApp link expects to just see it.
-      "Content-Disposition": `inline; filename="${invoice.number}.pdf"`,
+      // Inline by default so it opens in the browser; ?dl=1 forces a save (the
+      // landing page's "Download PDF" button).
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${invoice.number}.pdf"`,
       "Cache-Control": "private, no-store",
     },
   });
