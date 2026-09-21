@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { headers } from "next/headers";
 
 /**
  * Signed capability links for documents.
@@ -63,8 +64,25 @@ export const invoicePagePath = (id: string): string =>
 export const statementPagePath = (id: string, date: string): string =>
   `/p/statement/${id}?date=${date}&t=${signStatementToken(id, date)}`;
 
-/** Absolute URL for messages — a relative path is useless in WhatsApp. */
-export function absoluteUrl(path: string): string {
-  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+/**
+ * Absolute URL for messages — a relative path is useless in WhatsApp.
+ *
+ * Prefers NEXT_PUBLIC_SITE_URL, but ignores it when it's unset, still the
+ * example placeholder ("<your-project>…"), or localhost — in those cases it
+ * derives the real host from the incoming request, so share links always point
+ * at the actual deployment even if the env var was never set correctly.
+ */
+export async function absoluteUrl(path: string): Promise<string> {
+  let base = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+  if (!base || base.includes("<") || base.includes("localhost") || base.includes("127.0.0.1")) {
+    try {
+      const h = await headers();
+      const host = h.get("x-forwarded-host") || h.get("host");
+      const proto = h.get("x-forwarded-proto") || "https";
+      if (host) base = `${proto}://${host}`;
+    } catch {
+      /* not in a request scope — fall back to whatever base we had */
+    }
+  }
   return base ? `${base}${path}` : path;
 }

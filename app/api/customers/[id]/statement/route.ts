@@ -36,7 +36,7 @@ export async function POST(req: Request, { params }: Ctx) {
     const business = await businessForDocs();
     const period = from && to ? { from, to } : null;
     const today = new Date().toISOString().slice(0, 10);
-    const link = absoluteUrl(
+    const link = await absoluteUrl(
       statementPagePath(id, today) + (period ? `&from=${period.from}&to=${period.to}` : ""),
     );
 

@@ -71,7 +71,7 @@ export async function runDailyDigest(
     // Look up the account's outstanding for the message.
     const outstanding = await accountOutstanding(c.id);
 
-    const link = absoluteUrl(statementPagePath(c.id, today));
+    const link = await absoluteUrl(statementPagePath(c.id, today));
     const summaryLine = `${group.invoices.length} invoice${group.invoices.length === 1 ? "" : "s"} today totalling ${money(group.dayTotal, business.currency)}, of which ${money(group.dayPaid, business.currency)} paid. Account balance ${money(outstanding, business.currency)}.`;
 
     if (settings.digestToCustomers) {
