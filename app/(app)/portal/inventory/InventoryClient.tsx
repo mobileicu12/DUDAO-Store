@@ -78,13 +78,16 @@ export default function InventoryClient() {
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [stockFilter, setStockFilter] = useState<"all" | "low" | "out">("all");
+
   // Honour a ?stock=low|out deep link (e.g. from the dashboard's Low stock /
-  // Out of stock cards) so the list opens already filtered to those products.
-  const [stockFilter, setStockFilter] = useState<"all" | "low" | "out">(() => {
-    if (typeof window === "undefined") return "all";
+  // Out of stock cards). Done in an effect, not a lazy initial value: the lazy
+  // value runs during SSR (no window) and hydration keeps that, so the URL is
+  // only reliably read on the client here.
+  useEffect(() => {
     const s = new URLSearchParams(window.location.search).get("stock");
-    return s === "low" || s === "out" ? s : "all";
-  });
+    if (s === "low" || s === "out") setStockFilter(s);
+  }, []);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
