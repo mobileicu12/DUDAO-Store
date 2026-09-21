@@ -133,8 +133,12 @@ export default function CustomerDetailClient({ id }: { id: string }) {
       toast.error("No email or phone on file to send to.");
       return;
     }
+    // Reserve a tab NOW (during the click) for the WhatsApp open, so the browser
+    // doesn't block it after the request. Only when there's a number to send to.
+    const waWin = customer.phone ? window.open("", "_blank") : null;
     setSending(kind);
     const done: string[] = [];
+    let waUsed = false;
     try {
       for (const channel of ["email", "whatsapp"] as const) {
         if (channel === "email" && !customer.email) continue;
@@ -146,22 +150,26 @@ export default function CustomerDetailClient({ id }: { id: string }) {
         });
         if (res.ok) {
           const body = (await res.json().catch(() => ({}))) as { redirect?: string };
-          // No WhatsApp API → the server hands back a wa.me link; open WhatsApp
-          // directly with the message prefilled.
+          // No WhatsApp API → the server hands back a wa.me link; point the
+          // reserved tab at WhatsApp (customer's chat, or the picker).
           if (body.redirect) {
-            window.open(body.redirect, "_blank");
+            if (waWin) waWin.location.href = body.redirect;
+            else window.open(body.redirect, "_blank");
+            waUsed = true;
             done.push("WhatsApp");
           } else {
             done.push(channel === "email" ? "email" : "WhatsApp");
           }
         }
       }
+      if (!waUsed) waWin?.close();
       toast.success(
         done.length
           ? `${kind === "today" ? "Today's summary" : "Statement"} sent by ${done.join(" + ")}.`
           : "Nothing sent — email/WhatsApp may not be set up.",
       );
     } catch (e) {
+      waWin?.close();
       toast.error((e as Error).message);
     } finally {
       setSending("");
