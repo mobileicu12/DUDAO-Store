@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { BUSINESS, businessMark } from "@/lib/business";
 import { cx } from "@/components/ui/primitives";
 import { useCart } from "./CartContext";
@@ -14,6 +14,7 @@ export default function ShopHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const [me, setMe] = useState<Me>(null);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -25,6 +26,19 @@ export default function ShopHeader() {
       alive = false;
     };
   }, [pathname]);
+
+  // Keep the box in sync with the current ?q= (and clear it when leaving Shop).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const cur = new URLSearchParams(window.location.search).get("q") ?? "";
+    setQ(pathname === "/shop" ? cur : "");
+  }, [pathname]);
+
+  const onSearch = (e: FormEvent) => {
+    e.preventDefault();
+    const term = q.trim();
+    router.push(term ? `/shop?q=${encodeURIComponent(term)}` : "/shop");
+  };
 
   const logout = async () => {
     await fetch("/api/shop/login", { method: "DELETE" });
@@ -66,6 +80,32 @@ export default function ShopHeader() {
           {link("/shop/about", "About")}
           {link("/shop/contact", "Contact")}
         </nav>
+
+        <form onSubmit={onSearch} role="search" className="hidden min-w-0 flex-1 px-2 sm:block">
+          <div className="relative mx-auto max-w-sm">
+            <svg
+              viewBox="0 0 24 24"
+              className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.7}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3-3" />
+            </svg>
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search products…"
+              aria-label="Search products"
+              className="h-9 w-full rounded-md border border-line-strong bg-surface pr-3 pl-9 text-sm text-ink placeholder:text-muted focus:border-accent focus:outline-none"
+            />
+          </div>
+        </form>
 
         <div className="ml-auto flex items-center gap-3">
           <Link
