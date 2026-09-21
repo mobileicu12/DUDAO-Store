@@ -196,22 +196,41 @@ export default function DashboardClient() {
         )}
       </section>
 
-      {/* Catalog stats */}
+      {/* Catalog stats — the stock cards deep-link into a filtered inventory
+          list so you can jump straight to those products and refill them. */}
       <section className="mb-7 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total products" value={stats?.products ?? 0} loading={loading} />
-        <StatCard
-          label={`Low stock (≤${stats?.threshold ?? 5})`}
-          value={stats?.lowStock ?? 0}
-          tone={stats && stats.lowStock > 0 ? "warning" : "neutral"}
-          loading={loading}
-        />
-        <StatCard
-          label="Out of stock"
-          value={stats?.outOfStock ?? 0}
-          tone={stats && stats.outOfStock > 0 ? "danger" : "neutral"}
-          loading={loading}
-        />
-        <StatCard label="Collections" value={stats?.collections ?? 0} loading={loading} />
+        <Link href="/portal/inventory" className="block rounded-xl transition-transform hover:-translate-y-0.5">
+          <StatCard label="Total products" value={stats?.products ?? 0} loading={loading} />
+        </Link>
+        <Link
+          href="/portal/inventory?stock=low"
+          className="block rounded-xl transition-transform hover:-translate-y-0.5"
+          title="Show low-stock products to refill"
+        >
+          <StatCard
+            label={`Low stock (≤${stats?.threshold ?? 5})`}
+            value={stats?.lowStock ?? 0}
+            hint="Tap to view & refill"
+            tone={stats && stats.lowStock > 0 ? "warning" : "neutral"}
+            loading={loading}
+          />
+        </Link>
+        <Link
+          href="/portal/inventory?stock=out"
+          className="block rounded-xl transition-transform hover:-translate-y-0.5"
+          title="Show out-of-stock products to refill"
+        >
+          <StatCard
+            label="Out of stock"
+            value={stats?.outOfStock ?? 0}
+            hint="Tap to view & refill"
+            tone={stats && stats.outOfStock > 0 ? "danger" : "neutral"}
+            loading={loading}
+          />
+        </Link>
+        <Link href="/portal/collections" className="block rounded-xl transition-transform hover:-translate-y-0.5">
+          <StatCard label="Collections" value={stats?.collections ?? 0} loading={loading} />
+        </Link>
       </section>
 
       <SectionLabel>Quick actions</SectionLabel>

@@ -78,7 +78,13 @@ export default function InventoryClient() {
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [stockFilter, setStockFilter] = useState<"all" | "low" | "out">("all");
+  // Honour a ?stock=low|out deep link (e.g. from the dashboard's Low stock /
+  // Out of stock cards) so the list opens already filtered to those products.
+  const [stockFilter, setStockFilter] = useState<"all" | "low" | "out">(() => {
+    if (typeof window === "undefined") return "all";
+    const s = new URLSearchParams(window.location.search).get("stock");
+    return s === "low" || s === "out" ? s : "all";
+  });
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
