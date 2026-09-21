@@ -179,8 +179,8 @@ export default function TodaySendDrawer() {
                     <Button
                       size="sm"
                       loading={busy === `${c.id}:whatsapp`}
-                      disabled={!c.phone}
                       onClick={() => send(c, "whatsapp")}
+                      title={c.phone ? "Send on WhatsApp" : "Opens WhatsApp — pick a contact to send to"}
                       className={cx(done.includes("whatsapp") && "opacity-60")}
                     >
                       {done.includes("whatsapp") ? "WhatsApp ✓" : "WhatsApp"}
