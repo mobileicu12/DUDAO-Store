@@ -77,6 +77,9 @@ export default function TodaySendDrawer() {
 
   const send = async (c: TodayCustomer, channel: "email" | "whatsapp") => {
     if (!c.id) return;
+    // Reserve a tab NOW, during the click, so opening WhatsApp after the request
+    // isn't blocked as a pop-up. We point it at the chat once the link is back.
+    const waWin = channel === "whatsapp" ? window.open("", "_blank") : null;
     setBusy(`${c.id}:${channel}`);
     try {
       // One route sends the day summary over the chosen channel, attaching the
@@ -87,16 +90,24 @@ export default function TodaySendDrawer() {
         body: JSON.stringify({ channel }),
       });
       if (!res.ok) {
+        waWin?.close();
         const b = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error ?? "That message did not send.");
       }
       const body = (await res.json().catch(() => ({}))) as { redirect?: string };
-      // No WhatsApp API → open WhatsApp directly with the message prefilled.
-      if (body.redirect) window.open(body.redirect, "_blank");
+      // No WhatsApp API → send opens WhatsApp directly (the customer's chat when
+      // we have a number, or the contact picker when we don't).
+      if (body.redirect) {
+        if (waWin) waWin.location.href = body.redirect;
+        else window.open(body.redirect, "_blank");
+      } else {
+        waWin?.close();
+      }
       markSent(c.id, channel);
       setSent(loadSent());
       toast.success(`Sent to ${c.name} by ${channel}.`);
     } catch (e) {
+      waWin?.close();
       toast.error((e as Error).message);
     } finally {
       setBusy(null);
