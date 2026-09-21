@@ -52,7 +52,7 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const business = await businessForDocs();
     const today = new Date().toISOString().slice(0, 10);
-    const link = absoluteUrl(statementPagePath(id, today));
+    const link = await absoluteUrl(statementPagePath(id, today));
 
     if (channel === "whatsapp") {
       const text = `${business.name}: your day summary. Balance ${business.currency} ${customer.outstanding.toFixed(2)}. Statement: ${link}`;
