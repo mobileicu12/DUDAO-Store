@@ -899,8 +899,9 @@ export default function TillClient({
             </div>
           </dl>
 
-          {/* How the sale was paid — POS completes on the spot. */}
-          {mode === "pos" && (
+          {/* How the sale/payment was taken. POS always; wholesale shows it once
+              a payment amount is being taken against the account. */}
+          {(mode === "pos" || Number(received) > 0) && (
             <div className="mt-4">
               <p className="mb-1.5 text-xs font-medium text-ink-2">Paid by</p>
               <div className="flex rounded-md border border-line-strong p-0.5">
@@ -951,27 +952,6 @@ export default function TillClient({
                   pay all
                 </button>
               </div>
-              {/* How the payment was taken — same cash/card/bank choice as POS. */}
-              {Number(received) > 0 && (
-                <div className="pt-1">
-                  <p className="mb-1.5 text-xs font-medium text-ink-2">Paid by</p>
-                  <div className="flex rounded-md border border-accent/40 bg-surface p-0.5">
-                    {(["cash", "card", "bank"] as PaymentMethod[]).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setPayMethod(m)}
-                        className={cx(
-                          "flex-1 rounded px-2 py-1.5 text-xs font-semibold capitalize transition-colors",
-                          payMethod === m ? "bg-ink text-surface" : "text-ink-2 hover:bg-subtle",
-                        )}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div className="flex justify-between border-t border-accent/30 pt-2 text-base font-semibold">
                 <span className="text-ink-2">New outstanding</span>
                 <span className={cx("tnum", newOutstanding > 0 ? "text-danger" : "text-success")}>
