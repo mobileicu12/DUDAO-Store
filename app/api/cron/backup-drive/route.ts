@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { buildBackupSnapshot, backupFilename } from "@/lib/backup";
 import { uploadTextToDrive, driveConfigured } from "@/lib/google-drive";
 import { uploadTextToR2, r2Configured } from "@/lib/s3-backup";
-import { saveBackupToDb } from "@/lib/db-backups";
+import { saveBackupToDb, OFFSITE_BACKUP_KEEP } from "@/lib/db-backups";
 import { loadBusiness } from "@/lib/business";
 import { isOwnerRequest } from "@/lib/guard";
 
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /** Keep a month of dailies in the off-site bucket. */
-const R2_KEEP = 30;
+const R2_KEEP = OFFSITE_BACKUP_KEEP;
 
 /**
  * Daily end-to-end backup.

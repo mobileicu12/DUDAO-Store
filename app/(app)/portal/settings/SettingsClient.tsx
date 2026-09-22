@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import type { PortalSettings } from "@/lib/settings";
 import { useIsOwner } from "@/lib/use-me";
 import {
@@ -178,6 +178,7 @@ export default function SettingsClient() {
           "Stored in the database. (Off-site storage isn't set up yet — see the note below.)",
         );
       }
+      loadBackups();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -226,6 +227,71 @@ export default function SettingsClient() {
       toast.error((err as Error).message);
     } finally {
       setRestoreBusy(false);
+    }
+  };
+
+  // ---- Saved backups: list / download / restore-from-saved ----
+  type SavedBackup = { id: string; createdAt: string; kind: string; label: string; sizeBytes: number };
+  const [backups, setBackups] = useState<SavedBackup[]>([]);
+  const [retention, setRetention] = useState<{
+    keepInDatabase: number;
+    keepOffsite: number;
+    offsite: { configured: boolean };
+  } | null>(null);
+  const [restoringId, setRestoringId] = useState("");
+
+  const loadBackups = useCallback(() => {
+    fetch("/api/backups", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setBackups(d.backups ?? []);
+        setRetention(d);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (isOwner) loadBackups();
+  }, [isOwner, loadBackups]);
+
+  const fmtBytes = (n: number) =>
+    n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  const fmtWhen = (iso: string) =>
+    new Date(iso).toLocaleString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  const restoreSaved = async (b: SavedBackup) => {
+    const typed = window.prompt(
+      `Restore the backup from ${fmtWhen(b.createdAt)}? This REPLACES all current data with that snapshot. A pre-restore copy is saved off-site first if configured.\n\nType RESTORE to confirm:`,
+    );
+    if (typed !== "RESTORE") {
+      if (typed !== null) toast.error("Restore cancelled — you didn't type RESTORE.");
+      return;
+    }
+    setRestoringId(b.id);
+    try {
+      const res = await fetch(`/api/backups/${b.id}/restore`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        restored?: { products: number; customers: number; invoices: number };
+      };
+      if (!res.ok) throw new Error(body.error ?? "The restore failed.");
+      const r = body.restored;
+      toast.success(
+        "Backup restored.",
+        r ? `${r.products} products, ${r.customers} customers, ${r.invoices} invoices.` : undefined,
+      );
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setRestoringId("");
     }
   };
 
@@ -515,11 +581,77 @@ export default function SettingsClient() {
             </div>
             <p className="mt-2 text-xs text-muted">
               A dated snapshot is saved automatically every night — always into
-              this database, and off-site to Cloudflare R2 storage once it's set
+              this database, and off-site to Cloudflare R2 storage once it&apos;s set
               up (a static access key that never expires, so it keeps working
-              without you touching it). The last 30 nightly copies are kept
-              off-site.
+              without you touching it).{" "}
+              {retention
+                ? `Kept: the last ${retention.keepInDatabase} here (about 2 weeks) and the last ${retention.keepOffsite} off-site (about a month); older ones are removed automatically. Off-site is ${retention.offsite.configured ? "connected" : "not set up yet"}.`
+                : "Older copies are removed automatically."}
             </p>
+
+            {/* Saved backups — view, download or restore any stored snapshot. */}
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-ink">Saved backups</p>
+                <button
+                  type="button"
+                  onClick={loadBackups}
+                  className="text-xs font-medium text-muted transition-colors hover:text-ink"
+                >
+                  ↻ Refresh
+                </button>
+              </div>
+              {backups.length === 0 ? (
+                <p className="mt-2 text-xs text-muted">
+                  No saved backups yet. They appear here after the nightly run or
+                  when you press &ldquo;Back up now&rdquo;.
+                </p>
+              ) : (
+                <div className="mt-2 overflow-hidden rounded-lg border border-line">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-line bg-subtle text-xs uppercase text-muted">
+                      <tr>
+                        <th className="px-3 py-2">When</th>
+                        <th className="px-3 py-2">Type</th>
+                        <th className="px-3 py-2">Size</th>
+                        <th className="px-3 py-2 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {backups.map((b) => (
+                        <tr key={b.id}>
+                          <td className="whitespace-nowrap px-3 py-2 font-medium text-ink">
+                            {fmtWhen(b.createdAt)}
+                          </td>
+                          <td className="px-3 py-2 text-muted">
+                            {b.kind === "auto" ? "Nightly" : "Manual"}
+                          </td>
+                          <td className="tnum whitespace-nowrap px-3 py-2 text-muted">
+                            {fmtBytes(b.sizeBytes)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right">
+                            <a
+                              href={`/api/backups/${b.id}`}
+                              className="mr-3 text-xs font-semibold text-accent hover:underline"
+                            >
+                              Download
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => restoreSaved(b)}
+                              disabled={!!restoringId}
+                              className="text-xs font-semibold text-danger hover:underline disabled:opacity-50"
+                            >
+                              {restoringId === b.id ? "Restoring…" : "Restore"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
             <div className="mt-4 border-t border-line pt-4">
               <p className="text-sm font-medium text-ink">Restore from a backup</p>

@@ -14,6 +14,9 @@ import { db } from "./db";
 /** How many snapshots to keep in the database (last ~2 weeks of dailies). */
 export const DB_BACKUP_KEEP = 14;
 
+/** How many dated snapshots to keep off-site in R2 (about a month of dailies). */
+export const OFFSITE_BACKUP_KEEP = 30;
+
 export async function saveBackupToDb(
   snapshot: unknown,
   kind: "auto" | "manual",
