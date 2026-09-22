@@ -47,11 +47,18 @@ type Tables = {
   invoiceLines: AnyRow[];
   payments: AnyRow[];
   attendance: AnyRow[];
+  expenses: AnyRow[];
+  buying: AnyRow[];
+  cashUps: AnyRow[];
+  financeAccess: AnyRow[];
+  auditLogs: AnyRow[];
+  importBatches: AnyRow[];
 };
 
 /** Normalise either snapshot version into flat per-table arrays. */
 function normalize(snap: AnyRow): Tables {
-  // Version 2: flat arrays, one per table.
+  // Version 2/3: flat arrays, one per table. (v3 adds expenses, buying,
+  // cash-ups, finance access, audit log and import batches.)
   if (Array.isArray(snap.productImages)) {
     return {
       setting: arr(snap.setting)[0] ?? null,
@@ -67,6 +74,12 @@ function normalize(snap: AnyRow): Tables {
       invoiceLines: arr(snap.invoiceLines),
       payments: arr(snap.payments),
       attendance: arr(snap.attendance),
+      expenses: arr(snap.expenses),
+      buying: arr(snap.buying),
+      cashUps: arr(snap.cashUps),
+      financeAccess: arr(snap.financeAccess),
+      auditLogs: arr(snap.auditLogs),
+      importBatches: arr(snap.importBatches),
     };
   }
 
@@ -115,6 +128,12 @@ function normalize(snap: AnyRow): Tables {
     invoiceLines,
     payments: [...paymentsById.values()],
     attendance: [],
+    expenses: [],
+    buying: [],
+    cashUps: [],
+    financeAccess: [],
+    auditLogs: [],
+    importBatches: [],
   };
 }
 
@@ -132,6 +151,10 @@ export type RestoreResult = {
   invoices: number;
   payments: number;
   attendance: number;
+  expenses: number;
+  buying: number;
+  cashUps: number;
+  auditLogs: number;
 };
 
 // Only the columns each table actually has — so an old file with extra/renamed
@@ -150,6 +173,12 @@ const FIELDS: Record<string, string[]> = {
   counter: ["id", "year", "seq"],
   setting: ["id", "name", "tagline", "address", "email", "phone", "website", "taxNumber", "bankDetails", "invoiceFooter", "invoicePrefix", "taxRate", "lowStockThreshold", "currency", "faviconUrl", "digestEnabled", "digestToCustomers", "digestToOwner", "digestOwnerEmail", "digestOwnerWa", "digestLastRun", "requireTapIn", "reportButtonHour"],
   integration: ["whatsappToken", "whatsappPhoneId", "whatsappTemplate", "whatsappTemplateLang"],
+  expense: ["id", "date", "category", "description", "amount", "method", "note", "createdBy", "createdAt"],
+  buying: ["id", "date", "supplier", "description", "amount", "included", "createdBy", "createdAt"],
+  cashUp: ["id", "businessDay", "createdAt", "who", "float", "expectedCash", "cashExpenses", "countedCash", "variance", "countedCard", "cardVariance", "byMethod", "sheet", "note"],
+  financeAccess: ["email", "name", "expiresAt", "requestedAt"],
+  auditLog: ["id", "at", "who", "action", "ref", "name", "detail", "data"],
+  importBatch: ["id", "createdAt", "who", "fileName", "created", "updated", "failed", "snapshot", "undone", "undoneAt"],
 };
 
 const shape = (rows: AnyRow[], model: string): AnyRow[] => {
@@ -167,6 +196,18 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
     throw new DataError("That file is not a valid DUDAO backup.", { status: 400, code: "invalid" });
   }
   const t = normalize(snapshot as AnyRow);
+  // Only touch the standalone tables that this file actually carries, so
+  // restoring an older backup (before these were captured) never silently
+  // wipes today's expenses / cash-ups / audit log.
+  const snap = snapshot as AnyRow;
+  const has = {
+    expenses: Array.isArray(snap.expenses),
+    buying: Array.isArray(snap.buying),
+    cashUps: Array.isArray(snap.cashUps),
+    financeAccess: Array.isArray(snap.financeAccess),
+    auditLogs: Array.isArray(snap.auditLogs),
+    importBatches: Array.isArray(snap.importBatches),
+  };
 
   await db.$transaction(
     async (tx) => {
@@ -182,6 +223,13 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
       await tx.customer.deleteMany({});
       await tx.user.deleteMany({});
       await tx.counter.deleteMany({});
+      // Standalone tables (no relations) — cleared only when present in the file.
+      if (has.expenses) await tx.expense.deleteMany({});
+      if (has.buying) await tx.buying.deleteMany({});
+      if (has.cashUps) await tx.cashUp.deleteMany({});
+      if (has.financeAccess) await tx.financeAccess.deleteMany({});
+      if (has.auditLogs) await tx.auditLog.deleteMany({});
+      if (has.importBatches) await tx.importBatch.deleteMany({});
 
       // Rebuild, parents first.
       for (const p of chunk(shape(t.counter, "counter"), 500)) await tx.counter.createMany({ data: p as never, skipDuplicates: true });
@@ -195,6 +243,13 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
       for (const p of chunk(shape(t.invoiceLines, "invoiceLine"), 1000)) await tx.invoiceLine.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.payments, "payment"), 1000)) await tx.payment.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.attendance, "attendance"), 1000)) await tx.attendance.createMany({ data: p as never, skipDuplicates: true });
+      // Standalone tables (no relations), rebuilt when present in the file.
+      if (has.expenses) for (const p of chunk(shape(t.expenses, "expense"), 1000)) await tx.expense.createMany({ data: p as never, skipDuplicates: true });
+      if (has.buying) for (const p of chunk(shape(t.buying, "buying"), 1000)) await tx.buying.createMany({ data: p as never, skipDuplicates: true });
+      if (has.cashUps) for (const p of chunk(shape(t.cashUps, "cashUp"), 500)) await tx.cashUp.createMany({ data: p as never, skipDuplicates: true });
+      if (has.financeAccess) for (const p of chunk(shape(t.financeAccess, "financeAccess"), 1000)) await tx.financeAccess.createMany({ data: p as never, skipDuplicates: true });
+      if (has.auditLogs) for (const p of chunk(shape(t.auditLogs, "auditLog"), 1000)) await tx.auditLog.createMany({ data: p as never, skipDuplicates: true });
+      if (has.importBatches) for (const p of chunk(shape(t.importBatches, "importBatch"), 500)) await tx.importBatch.createMany({ data: p as never, skipDuplicates: true });
 
       if (t.setting) {
         const s = shape([t.setting], "setting")[0];
@@ -216,5 +271,9 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
     invoices: t.invoices.length,
     payments: t.payments.length,
     attendance: t.attendance.length,
+    expenses: t.expenses.length,
+    buying: t.buying.length,
+    cashUps: t.cashUps.length,
+    auditLogs: t.auditLogs.length,
   };
 }

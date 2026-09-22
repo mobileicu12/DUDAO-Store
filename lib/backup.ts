@@ -28,6 +28,12 @@ export async function buildBackupSnapshot() {
     invoiceLines,
     payments,
     attendance,
+    expenses,
+    buying,
+    cashUps,
+    financeAccess,
+    auditLogs,
+    importBatches,
   ] = await Promise.all([
     db.setting.findMany(),
     db.integration.findMany(),
@@ -42,10 +48,16 @@ export async function buildBackupSnapshot() {
     db.invoiceLine.findMany(),
     db.payment.findMany(),
     db.attendance.findMany(),
+    db.expense.findMany(),
+    db.buying.findMany(),
+    db.cashUp.findMany(),
+    db.financeAccess.findMany(),
+    db.auditLog.findMany(),
+    db.importBatch.findMany(),
   ]);
 
   return {
-    version: 2,
+    version: 3,
     generatedAt: new Date().toISOString(),
     counts: {
       users: users.length,
@@ -55,8 +67,13 @@ export async function buildBackupSnapshot() {
       invoices: invoices.length,
       payments: payments.length,
       attendance: attendance.length,
+      expenses: expenses.length,
+      buying: buying.length,
+      cashUps: cashUps.length,
+      auditLogs: auditLogs.length,
     },
-    // Every table, flat. Keys map 1:1 to Prisma models.
+    // Every table, flat. Keys map 1:1 to Prisma models. (The Backup table
+    // itself is intentionally excluded — it holds snapshots, not shop data.)
     setting,
     integration,
     counter,
@@ -70,6 +87,12 @@ export async function buildBackupSnapshot() {
     invoiceLines,
     payments,
     attendance,
+    expenses,
+    buying,
+    cashUps,
+    financeAccess,
+    auditLogs,
+    importBatches,
   };
 }
 
