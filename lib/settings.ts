@@ -46,6 +46,9 @@ export type PortalSettings = {
   requireTapIn: boolean;
   /** Hour (0–23) after which the header shows the day-report shortcut. */
   reportButtonHour: number;
+
+  /** Storefront customer account portal (trade login → invoices/balance). */
+  customerPortal: boolean;
 };
 
 export const DEFAULT_SETTINGS: PortalSettings = {
@@ -75,6 +78,7 @@ export const DEFAULT_SETTINGS: PortalSettings = {
 
   requireTapIn: false,
   reportButtonHour: 17,
+  customerPortal: true,
 };
 
 /** Secrets. This type must never be returned from an API route. */
@@ -144,6 +148,7 @@ export async function getSettings(force = false): Promise<PortalSettings> {
       digestLastRun: row.digestLastRun,
       requireTapIn: row.requireTapIn,
       reportButtonHour: row.reportButtonHour,
+      customerPortal: row.customerPortal ?? true,
     };
 
     settingsCache = { at: Date.now(), value };
@@ -190,6 +195,7 @@ export async function saveSettings(
       "digestToCustomers",
       "digestToOwner",
       "requireTapIn",
+      "customerPortal",
     ] as (keyof PortalSettings)[]
   ).forEach(bool);
 

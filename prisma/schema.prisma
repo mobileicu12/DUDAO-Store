@@ -179,6 +179,10 @@ model Setting {
   requireTapIn     Boolean @default(false)
   reportButtonHour Int     @default(17)
 
+  /// When on, registered customers can log in on the storefront to see their
+  /// invoices, balance and statement. Off hides trade login entirely.
+  customerPortal Boolean @default(true)
+
   updatedAt DateTime @updatedAt
 }
 

@@ -6,6 +6,13 @@ import { priceForContext } from "@/lib/pricing";
 import { createBill } from "@/lib/billing";
 import { computeTotals } from "@/lib/billing-shared";
 import { TRADE_COOKIE, readTradeCookie } from "@/lib/trade-session";
+import { getSettings } from "@/lib/settings";
+
+/** Is the storefront customer account portal turned on in Settings? */
+export async function customerPortalEnabled(): Promise<boolean> {
+  const s = await getSettings().catch(() => null);
+  return s ? s.customerPortal : true;
+}
 
 /**
  * Storefront data layer. Everything the public /shop side reads or writes goes

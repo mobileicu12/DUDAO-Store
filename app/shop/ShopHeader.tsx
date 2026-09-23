@@ -14,13 +14,18 @@ export default function ShopHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const [me, setMe] = useState<Me>(null);
+  const [portalOn, setPortalOn] = useState(true);
   const [q, setQ] = useState("");
 
   useEffect(() => {
     let alive = true;
     fetch("/api/shop/me", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { customer: null }))
-      .then((d: { customer: Me }) => alive && setMe(d.customer))
+      .then((r) => (r.ok ? r.json() : { customer: null, portalEnabled: true }))
+      .then((d: { customer: Me; portalEnabled?: boolean }) => {
+        if (!alive) return;
+        setMe(d.customer);
+        setPortalOn(d.portalEnabled !== false);
+      })
       .catch(() => {});
     return () => {
       alive = false;
@@ -142,12 +147,14 @@ export default function ShopHeader() {
               </button>
             </div>
           ) : (
-            <Link
-              href="/shop/trade-login"
-              className="flex h-9 items-center rounded-md bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
-            >
-              Trade login
-            </Link>
+            portalOn && (
+              <Link
+                href="/shop/trade-login"
+                className="flex h-9 items-center rounded-md bg-accent px-3.5 text-sm font-semibold text-accentfg transition-colors hover:bg-accent-hover"
+              >
+                Trade login
+              </Link>
+            )
           )}
         </div>
       </div>

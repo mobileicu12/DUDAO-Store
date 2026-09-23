@@ -446,6 +446,27 @@ export default function SettingsClient() {
           </div>
         </Card>
 
+        {/* Storefront customer portal */}
+        <Card>
+          <CardHeader
+            title="Customer account portal"
+            subtitle="Let registered customers log in on the website."
+          />
+          <div className="mt-3">
+            <Switch
+              checked={settings.customerPortal}
+              onChange={(v) => set({ customerPortal: v })}
+              label="Allow customer login on the storefront"
+            />
+            <p className="mt-2 text-xs text-muted">
+              When on, an approved trade customer can sign in at{" "}
+              <span className="font-medium text-ink-2">/shop</span> and see their
+              invoices, outstanding balance and account statement (and download
+              each). Turn off to hide login from the storefront entirely.
+            </p>
+          </div>
+        </Card>
+
         {/* WhatsApp */}
         <Card>
           <CardHeader
