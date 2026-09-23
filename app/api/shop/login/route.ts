@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { TRADE_COOKIE, issueTradeCookie } from "@/lib/trade-session";
+import { customerPortalEnabled } from "@/lib/storefront";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,12 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
  * unapproved account fail identically, so the form never reveals which.
  */
 export async function POST(req: Request) {
+  if (!(await customerPortalEnabled())) {
+    return NextResponse.json(
+      { error: "Customer accounts are not available." },
+      { status: 403 },
+    );
+  }
   let email = "";
   let code = "";
   try {

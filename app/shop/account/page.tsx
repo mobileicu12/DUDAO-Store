@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { money } from "@/lib/business";
-import { currentTradeCustomer, tradeAccount } from "@/lib/storefront";
+import { currentTradeCustomer, tradeAccount, customerPortalEnabled } from "@/lib/storefront";
+import { invoiceSharePath, statementSharePath } from "@/lib/invoice-link";
 import { cx } from "@/lib/cx";
 import AccountForm from "./AccountForm";
 
@@ -15,6 +16,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 export default async function AccountPage() {
+  if (!(await customerPortalEnabled())) redirect("/shop");
   const customer = await currentTradeCustomer();
   if (!customer) redirect("/shop/trade-login");
 
@@ -30,18 +32,26 @@ export default async function AccountPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-ink">Your account</h1>
           <p className="mt-1 text-sm text-muted">{profile.company || profile.name}</p>
         </div>
-        <div className="rounded-lg border border-line bg-surface px-4 py-2.5 text-right">
-          <p className="text-[0.7rem] font-semibold tracking-wider text-muted uppercase">
-            Account balance
-          </p>
-          <p
-            className={cx(
-              "tnum text-xl font-semibold",
-              customer.outstanding > 0 ? "text-warning" : "text-success",
-            )}
+        <div className="flex items-center gap-3">
+          <a
+            href={`${statementSharePath(customer.id, new Date().toISOString().slice(0, 10))}&dl=1`}
+            className="inline-flex h-9 items-center rounded-md border border-line bg-surface px-3.5 text-sm font-semibold text-ink transition-colors hover:bg-subtle"
           >
-            {money(customer.outstanding)}
-          </p>
+            ⬇ Statement
+          </a>
+          <div className="rounded-lg border border-line bg-surface px-4 py-2.5 text-right">
+            <p className="text-[0.7rem] font-semibold tracking-wider text-muted uppercase">
+              Account balance
+            </p>
+            <p
+              className={cx(
+                "tnum text-xl font-semibold",
+                customer.outstanding > 0 ? "text-warning" : "text-success",
+              )}
+            >
+              {money(customer.outstanding)}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -69,6 +79,7 @@ export default async function AccountPage() {
                   <th className="px-4 py-2.5 text-right font-medium">Total</th>
                   <th className="px-4 py-2.5 text-right font-medium">Balance</th>
                   <th className="px-4 py-2.5 text-right font-medium">Status</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Invoice</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -98,6 +109,16 @@ export default async function AccountPage() {
                       >
                         {o.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <a
+                        href={invoiceSharePath(o.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-semibold text-accent hover:underline"
+                      >
+                        View PDF
+                      </a>
                     </td>
                   </tr>
                 ))}
