@@ -209,6 +209,150 @@ export async function searchProducts(
   return rows.map(toRecord);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Sellable units (products + variants) — for the till and storefront          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One thing a customer can actually buy: a flat product, or a specific variant
+ * of one. The till and storefront sell these, not raw products — a product with
+ * variants is never itself sellable, only its variants are.
+ */
+export type SellableHit = {
+  productId: string;
+  variantId: string | null;
+  handle: string;
+  title: string;
+  /** "" for a flat product; the variant's name (e.g. "Grade A") otherwise. */
+  variantTitle: string;
+  sku: string;
+  barcode: string;
+  price: number;
+  compareAtPrice: number | null;
+  tiers: TierPrices;
+  stock: number;
+  imageUrl: string | null;
+};
+
+const withVariantsAndImage = {
+  images: { orderBy: { position: "asc" as const }, take: 1 },
+  variants: { orderBy: { position: "asc" as const } },
+};
+
+type ProductWithVariants = Prisma.ProductGetPayload<{
+  include: typeof withVariantsAndImage;
+}>;
+
+/** Expand a product into its sellable units: each variant, or the product itself. */
+function toSellable(p: ProductWithVariants): SellableHit[] {
+  const imageUrl = p.images[0]?.url ?? null;
+  if (p.variants.length > 0) {
+    return p.variants.map((v) => ({
+      productId: p.id,
+      variantId: v.id,
+      handle: p.handle,
+      title: p.title,
+      variantTitle: v.title,
+      sku: v.sku,
+      barcode: v.barcode,
+      price: num(v.price),
+      compareAtPrice: numOrNull(v.compareAtPrice),
+      tiers: {
+        wholesale: numOrNull(v.priceWholesale),
+        shop: numOrNull(v.priceShop),
+        ebay: numOrNull(v.priceEbay),
+        amazon: numOrNull(v.priceAmazon),
+      },
+      stock: v.stock,
+      imageUrl,
+    }));
+  }
+  return [
+    {
+      productId: p.id,
+      variantId: null,
+      handle: p.handle,
+      title: p.title,
+      variantTitle: "",
+      sku: p.sku,
+      barcode: p.barcode,
+      price: num(p.price),
+      compareAtPrice: numOrNull(p.compareAtPrice),
+      tiers: {
+        wholesale: numOrNull(p.priceWholesale),
+        shop: numOrNull(p.priceShop),
+        ebay: numOrNull(p.priceEbay),
+        amazon: numOrNull(p.priceAmazon),
+      },
+      stock: p.stock,
+      imageUrl,
+    },
+  ];
+}
+
+/** Typeahead for the till: every sellable unit (variant-aware) matching a term. */
+export async function searchSellable(q: string, limit = 20): Promise<SellableHit[]> {
+  const term = q.trim();
+  if (!term) return [];
+
+  const rows = await db.product.findMany({
+    where: {
+      status: "ACTIVE",
+      OR: [
+        { sku: { contains: term, mode: "insensitive" } },
+        { barcode: { contains: term, mode: "insensitive" } },
+        { title: { contains: term, mode: "insensitive" } },
+        { brand: { contains: term, mode: "insensitive" } },
+        { model: { contains: term, mode: "insensitive" } },
+        // A term can name a variant's own SKU/barcode.
+        { variants: { some: { sku: { contains: term, mode: "insensitive" } } } },
+        { variants: { some: { barcode: { contains: term, mode: "insensitive" } } } },
+      ],
+    },
+    include: withVariantsAndImage,
+    orderBy: { title: "asc" },
+    take: Math.min(limit, 50),
+  });
+
+  return rows.flatMap(toSellable).slice(0, Math.min(limit, 100));
+}
+
+/** Exact scan match on a product or variant barcode/SKU, for the scanner. */
+export async function lookupSellableByCode(code: string): Promise<SellableHit | null> {
+  const term = code.trim();
+  if (!term) return null;
+
+  // A variant code is the most specific answer — try it first.
+  const variant = await db.productVariant.findFirst({
+    where: {
+      OR: [
+        { barcode: { equals: term, mode: "insensitive" } },
+        { sku: { equals: term, mode: "insensitive" } },
+      ],
+    },
+    include: { product: { include: withVariantsAndImage } },
+  });
+  if (variant) {
+    return toSellable(variant.product).find((h) => h.variantId === variant.id) ?? null;
+  }
+
+  const row = await db.product.findFirst({
+    where: {
+      OR: [
+        { barcode: { equals: term, mode: "insensitive" } },
+        { sku: { equals: term, mode: "insensitive" } },
+      ],
+    },
+    include: withVariantsAndImage,
+  });
+  if (!row) return null;
+  // A flat product resolves to itself; a variant product can't be scanned by its
+  // parent code (ambiguous), so return its first variant is wrong — return null
+  // so the operator picks the variant. But a flat product has exactly one unit.
+  const hits = toSellable(row);
+  return hits.length === 1 && hits[0].variantId === null ? hits[0] : null;
+}
+
 /** Exact match on barcode or SKU, for the scanner. */
 export async function lookupByCode(code: string): Promise<ProductRecord | null> {
   const term = code.trim();
@@ -408,6 +552,123 @@ export async function updateProduct(
   // A type/brand/tag edit may bring the product into a smart collection.
   await applySmartRules([row.id]).catch(() => {});
   return toRecord(row);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Variants                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export type VariantRecord = {
+  id: string;
+  title: string;
+  sku: string;
+  barcode: string;
+  price: number;
+  compareAtPrice: number | null;
+  tiers: TierPrices;
+  stock: number;
+  position: number;
+};
+
+export type VariantInput = {
+  /** Keep this id to preserve a variant's invoice history; omit to create. */
+  id?: string;
+  title: string;
+  sku?: string;
+  barcode?: string;
+  price: number;
+  compareAtPrice?: number | null;
+  tiers?: TierPrices;
+  stock?: number;
+};
+
+export async function getProductVariants(productId: string): Promise<VariantRecord[]> {
+  const rows = await db.productVariant.findMany({
+    where: { productId },
+    orderBy: { position: "asc" },
+  });
+  return rows.map((v) => ({
+    id: v.id,
+    title: v.title,
+    sku: v.sku,
+    barcode: v.barcode,
+    price: num(v.price),
+    compareAtPrice: numOrNull(v.compareAtPrice),
+    tiers: {
+      wholesale: numOrNull(v.priceWholesale),
+      shop: numOrNull(v.priceShop),
+      ebay: numOrNull(v.priceEbay),
+      amazon: numOrNull(v.priceAmazon),
+    },
+    stock: v.stock,
+    position: v.position,
+  }));
+}
+
+/**
+ * Replace a product's variant set, preserving ids so past bills keep their
+ * links. Existing variants are updated in place, new ones created, and removed
+ * ones deleted (an invoice line that referenced a removed variant keeps its
+ * snapshot and simply loses the live link — the same as deleting a product).
+ *
+ * The parent product's aggregate is recomputed in the same transaction so the
+ * invariant holds: with variants, Product.stock = Σ variant stock and
+ * Product.price = the lowest variant price ("from"). Passing an empty list
+ * clears variants and leaves the product flat, keeping its own stock/price.
+ */
+export async function setProductVariants(
+  productId: string,
+  variants: VariantInput[],
+): Promise<VariantRecord[]> {
+  const product = await db.product.findUnique({ where: { id: productId }, select: { id: true } });
+  if (!product) throw notFound("product");
+
+  for (const v of variants) {
+    if (!v.title?.trim()) throw invalid("Every variant needs a name.");
+    if (!Number.isFinite(v.price) || v.price < 0) throw invalid(`Enter a valid price for "${v.title}".`);
+  }
+
+  await db.$transaction(async (tx) => {
+    const existing = await tx.productVariant.findMany({ where: { productId }, select: { id: true } });
+    const existingIds = new Set(existing.map((e) => e.id));
+    const keepIds = new Set(variants.map((v) => v.id).filter((id): id is string => Boolean(id) && existingIds.has(id!)));
+
+    // Remove variants the edit dropped.
+    const toDelete = [...existingIds].filter((id) => !keepIds.has(id));
+    if (toDelete.length) await tx.productVariant.deleteMany({ where: { id: { in: toDelete } } });
+
+    // Upsert the rest, in order.
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      const data = {
+        title: v.title.trim(),
+        sku: v.sku?.trim() ?? "",
+        barcode: v.barcode?.trim() ?? "",
+        price: money2(v.price),
+        compareAtPrice: v.compareAtPrice ?? null,
+        ...tierData(v.tiers),
+        stock: Math.round(v.stock ?? 0),
+        position: i,
+      };
+      if (v.id && existingIds.has(v.id)) {
+        await tx.productVariant.update({ where: { id: v.id }, data });
+      } else {
+        await tx.productVariant.create({ data: { ...data, productId } });
+      }
+    }
+
+    // Recompute the parent aggregate so every Product.stock reader stays right.
+    if (variants.length) {
+      const totalStock = variants.reduce((s, v) => s + Math.round(v.stock ?? 0), 0);
+      const minPrice = Math.min(...variants.map((v) => money2(v.price)));
+      await tx.product.update({
+        where: { id: productId },
+        data: { stock: totalStock, price: money2(minPrice) },
+      });
+    }
+  });
+
+  return getProductVariants(productId);
 }
 
 /* -------------------------------------------------------------------------- */

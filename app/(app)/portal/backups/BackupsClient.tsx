@@ -27,6 +27,7 @@ type Retention = {
 // to buildBackupSnapshot().counts; any extra key falls back to its raw name.
 const COUNT_LABELS: [key: string, label: string][] = [
   ["products", "products"],
+  ["variants", "variants"],
   ["collections", "collections"],
   ["customers", "customers"],
   ["invoices", "invoices"],

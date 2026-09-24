@@ -40,6 +40,7 @@ type Tables = {
   users: AnyRow[];
   products: AnyRow[];
   productImages: AnyRow[];
+  productVariants: AnyRow[];
   collections: AnyRow[];
   collectionProducts: AnyRow[];
   customers: AnyRow[];
@@ -67,6 +68,7 @@ function normalize(snap: AnyRow): Tables {
       users: arr(snap.users),
       products: arr(snap.products),
       productImages: arr(snap.productImages),
+      productVariants: arr(snap.productVariants),
       collections: arr(snap.collections),
       collectionProducts: arr(snap.collectionProducts),
       customers: arr(snap.customers),
@@ -121,6 +123,7 @@ function normalize(snap: AnyRow): Tables {
     users: [],
     products,
     productImages,
+    productVariants: [],
     collections: arr(snap.collections),
     collectionProducts,
     customers,
@@ -146,6 +149,7 @@ const chunk = <T>(a: T[], n: number): T[][] => {
 export type RestoreResult = {
   users: number;
   products: number;
+  variants: number;
   collections: number;
   customers: number;
   invoices: number;
@@ -166,8 +170,9 @@ const FIELDS: Record<string, string[]> = {
   collection: ["id", "handle", "title", "descriptionHtml", "imageUrl", "smartRule", "group", "createdAt"],
   collectionProduct: ["collectionId", "productId", "position"],
   productImage: ["id", "productId", "url", "alt", "position"],
+  productVariant: ["id", "productId", "title", "sku", "barcode", "price", "compareAtPrice", "priceWholesale", "priceShop", "priceEbay", "priceAmazon", "stock", "position", "createdAt"],
   invoice: ["id", "number", "customerId", "walkInName", "walkInPhone", "segment", "staffEmail", "staffName", "staffId", "status", "taxable", "taxRate", "discount", "notes", "issuedAt", "paidAt", "voidedAt"],
-  invoiceLine: ["id", "invoiceId", "productId", "title", "sku", "quantity", "unitPrice", "position"],
+  invoiceLine: ["id", "invoiceId", "productId", "variantId", "title", "variantTitle", "sku", "quantity", "unitPrice", "position"],
   payment: ["id", "customerId", "invoiceId", "amount", "method", "note", "staffEmail", "revoked", "revokedAt", "takenAt"],
   attendance: ["id", "email", "name", "userId", "tapIn", "tapOut", "autoOut"],
   counter: ["id", "year", "seq"],
@@ -216,6 +221,7 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
       await tx.invoiceLine.deleteMany({});
       await tx.collectionProduct.deleteMany({});
       await tx.productImage.deleteMany({});
+      await tx.productVariant.deleteMany({});
       await tx.attendance.deleteMany({});
       await tx.invoice.deleteMany({});
       await tx.collection.deleteMany({});
@@ -236,6 +242,9 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
       for (const p of chunk(shape(t.users, "user"), 500)) await tx.user.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.customers, "customer"), 500)) await tx.customer.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.products, "product"), 500)) await tx.product.createMany({ data: p as never, skipDuplicates: true });
+      // Variants sit between products and invoice lines: a line's variantId
+      // references one, so they must exist before the lines are rebuilt.
+      for (const p of chunk(shape(t.productVariants, "productVariant"), 500)) await tx.productVariant.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.collections, "collection"), 500)) await tx.collection.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.collectionProducts, "collectionProduct"), 1000)) await tx.collectionProduct.createMany({ data: p as never, skipDuplicates: true });
       for (const p of chunk(shape(t.productImages, "productImage"), 1000)) await tx.productImage.createMany({ data: p as never, skipDuplicates: true });
@@ -266,6 +275,7 @@ export async function restoreFromSnapshot(snapshot: unknown): Promise<RestoreRes
   return {
     users: t.users.length,
     products: t.products.length,
+    variants: t.productVariants.length,
     collections: t.collections.length,
     customers: t.customers.length,
     invoices: t.invoices.length,

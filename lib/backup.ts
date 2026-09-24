@@ -9,9 +9,10 @@ import { db } from "./db";
  * This includes staff accounts, the invoice counter and the time-clock, not
  * just the catalogue and ledger.
  *
- * Version 2 is the flat, all-tables shape. Older files (version 1) nested images
- * and lines inside their parents and omitted staff/counter/attendance; the
- * restore still understands them.
+ * Version 2 is the flat, all-tables shape; version 3 added expenses, buying,
+ * cash-ups, finance access, audit log and import history; version 4 adds product
+ * variants. Older files (version 1) nested images and lines inside their parents
+ * and omitted staff/counter/attendance; the restore still understands them all.
  */
 export async function buildBackupSnapshot() {
   const [
@@ -21,6 +22,7 @@ export async function buildBackupSnapshot() {
     users,
     products,
     productImages,
+    productVariants,
     collections,
     collectionProducts,
     customers,
@@ -41,6 +43,7 @@ export async function buildBackupSnapshot() {
     db.user.findMany(),
     db.product.findMany(),
     db.productImage.findMany(),
+    db.productVariant.findMany(),
     db.collection.findMany(),
     db.collectionProduct.findMany(),
     db.customer.findMany(),
@@ -57,11 +60,12 @@ export async function buildBackupSnapshot() {
   ]);
 
   return {
-    version: 3,
+    version: 4,
     generatedAt: new Date().toISOString(),
     counts: {
       users: users.length,
       products: products.length,
+      variants: productVariants.length,
       collections: collections.length,
       customers: customers.length,
       invoices: invoices.length,
@@ -80,6 +84,7 @@ export async function buildBackupSnapshot() {
     users,
     products,
     productImages,
+    productVariants,
     collections,
     collectionProducts,
     customers,

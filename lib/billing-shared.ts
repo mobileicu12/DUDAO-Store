@@ -25,7 +25,11 @@ export const methodLabel = (key: string): string =>
 export type BillLineInput = {
   /** Null for a custom line typed at the counter. */
   productId?: string | null;
+  /** Set when selling a specific product variant, so stock comes off it. */
+  variantId?: string | null;
   title: string;
+  /** The variant's name at sale time (e.g. "Grade A"), snapshotted on the line. */
+  variantTitle?: string;
   sku?: string;
   quantity: number;
   unitPrice: number;
