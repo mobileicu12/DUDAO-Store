@@ -150,6 +150,14 @@ export const NAV: NavItem[] = [
     perm: "settings",
   },
   {
+    href: "/portal/backups",
+    label: "Backup",
+    icon: "M7 18a4 4 0 0 1-.9-7.9 5 5 0 0 1 9.6-1.6A3.5 3.5 0 0 1 18 16.9M12 12v7m0-7-2.5 2.5M12 12l2.5 2.5",
+    group: "Admin",
+    perm: null,
+    ownerOnly: true,
+  },
+  {
     href: "/portal/logs",
     label: "Activity log",
     short: "Log",
