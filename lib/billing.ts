@@ -45,12 +45,44 @@ type InvoiceRow = Prisma.InvoiceGetPayload<{ include: typeof invoiceInclude }>;
 export type InvoiceLineRecord = {
   id: string;
   productId: string | null;
+  variantId: string | null;
   title: string;
+  variantTitle: string;
   sku: string;
   quantity: number;
   unitPrice: number;
   lineTotal: number;
 };
+
+/**
+ * Move stock for one sold/returned line, keeping the product's aggregate in
+ * step with its variants.
+ *
+ * `delta` is signed: negative sells (decrement), positive returns to the shelf.
+ * A variant line moves BOTH the variant and its parent product by the same
+ * amount, so Product.stock stays the sum of its variants (see the schema note)
+ * and every screen that reads Product.stock keeps working. A flat line moves
+ * only the product; a custom line (no product) moves nothing.
+ */
+async function moveStock(
+  tx: Prisma.TransactionClient,
+  line: { productId?: string | null; variantId?: string | null },
+  delta: number,
+): Promise<void> {
+  if (delta === 0) return;
+  if (line.variantId) {
+    await tx.productVariant.update({
+      where: { id: line.variantId },
+      data: { stock: { increment: delta } },
+    });
+  }
+  if (line.productId) {
+    await tx.product.update({
+      where: { id: line.productId },
+      data: { stock: { increment: delta } },
+    });
+  }
+}
 
 export type InvoiceRecord = {
   id: string;
@@ -88,7 +120,9 @@ export function toInvoiceRecord(row: InvoiceRow): InvoiceRecord {
   const lines = row.lines.map((l) => ({
     id: l.id,
     productId: l.productId,
+    variantId: l.variantId,
     title: l.title,
+    variantTitle: l.variantTitle,
     sku: l.sku,
     quantity: l.quantity,
     unitPrice: num(l.unitPrice),
@@ -306,7 +340,9 @@ export async function createBill(args: CreateBillArgs): Promise<InvoiceRecord> {
         lines: {
           create: args.lines.map((l, i) => ({
             productId: l.productId || null,
+            variantId: l.variantId || null,
             title: l.title.trim(),
+            variantTitle: l.variantTitle ?? "",
             sku: l.sku ?? "",
             quantity: Math.round(l.quantity),
             unitPrice: money2(l.unitPrice),
@@ -317,14 +353,11 @@ export async function createBill(args: CreateBillArgs): Promise<InvoiceRecord> {
       include: invoiceInclude,
     });
 
-    // Decrement stock for catalog lines. Custom lines have no product and move
-    // no stock, which is the point of them.
+    // Decrement stock for catalog lines (a variant line moves its variant and
+    // the parent product together). Custom lines have no product and move no
+    // stock, which is the point of them.
     for (const line of args.lines) {
-      if (!line.productId) continue;
-      await tx.product.update({
-        where: { id: line.productId },
-        data: { stock: { decrement: Math.round(line.quantity) } },
-      });
+      await moveStock(tx, line, -Math.round(line.quantity));
     }
 
     if (args.payment && args.payment.amount > 0) {
@@ -399,28 +432,25 @@ export async function updateInvoice(
 
   await db.$transaction(async (tx) => {
     if (patch.lines) {
-      // Net stock movement per product: old quantities go back, new ones come
-      // out. Doing it as a difference means an edit from 2 to 3 moves one unit,
-      // not five.
-      const delta = new Map<string, number>();
-      for (const l of existing.lines) {
-        if (!l.productId) continue;
-        delta.set(l.productId, (delta.get(l.productId) ?? 0) + l.quantity);
-      }
-      for (const l of patch.lines) {
-        if (!l.productId) continue;
-        delta.set(
-          l.productId,
-          (delta.get(l.productId) ?? 0) - Math.round(l.quantity),
-        );
-      }
+      // Net stock movement per sellable unit (product, or a specific variant):
+      // old quantities go back on the shelf, new ones come out. Doing it as a
+      // difference means an edit from 2 to 3 moves one unit, not five. Keying by
+      // product+variant keeps a variant swap correct — the old variant is
+      // restocked and the new one drawn down independently.
+      const delta = new Map<string, { productId: string | null; variantId: string | null; change: number }>();
+      const keyOf = (productId: string | null, variantId: string | null) => `${productId ?? ""}|${variantId ?? ""}`;
+      const bump = (productId: string | null, variantId: string | null, by: number) => {
+        if (!productId && !variantId) return; // custom line — no stock
+        const k = keyOf(productId, variantId);
+        const cur = delta.get(k) ?? { productId, variantId, change: 0 };
+        cur.change += by;
+        delta.set(k, cur);
+      };
+      for (const l of existing.lines) bump(l.productId, l.variantId, l.quantity);
+      for (const l of patch.lines) bump(l.productId ?? null, l.variantId ?? null, -Math.round(l.quantity));
 
-      for (const [productId, change] of delta) {
-        if (change === 0) continue;
-        await tx.product.update({
-          where: { id: productId },
-          data: { stock: { increment: change } },
-        });
+      for (const { productId, variantId, change } of delta.values()) {
+        await moveStock(tx, { productId, variantId }, change);
       }
 
       await tx.invoiceLine.deleteMany({ where: { invoiceId: id } });
@@ -428,7 +458,9 @@ export async function updateInvoice(
         data: patch.lines.map((l, i) => ({
           invoiceId: id,
           productId: l.productId || null,
+          variantId: l.variantId || null,
           title: l.title.trim(),
+          variantTitle: l.variantTitle ?? "",
           sku: l.sku ?? "",
           quantity: Math.round(l.quantity),
           unitPrice: money2(l.unitPrice),
@@ -582,11 +614,7 @@ export async function voidInvoice(id: string): Promise<InvoiceRecord> {
 
   await db.$transaction(async (tx) => {
     for (const line of existing.lines) {
-      if (!line.productId) continue;
-      await tx.product.update({
-        where: { id: line.productId },
-        data: { stock: { increment: line.quantity } },
-      });
+      await moveStock(tx, line, line.quantity);
     }
 
     // Payments against a voided bill are revoked too, so the customer's
@@ -616,7 +644,9 @@ export async function duplicateInvoice(
   return createBill({
     lines: source.lines.map((l) => ({
       productId: l.productId,
+      variantId: l.variantId,
       title: l.title,
+      variantTitle: l.variantTitle,
       sku: l.sku,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
@@ -657,7 +687,9 @@ export type DeletedInvoiceSnapshot = {
   issuedAt: string;
   lines: {
     productId: string | null;
+    variantId: string | null;
     title: string;
+    variantTitle: string;
     sku: string;
     quantity: number;
     unitPrice: number;
@@ -705,7 +737,9 @@ export async function deleteInvoice(id: string): Promise<DeletedInvoiceSummary> 
     issuedAt: existing.issuedAt.toISOString(),
     lines: existing.lines.map((l, i) => ({
       productId: l.productId,
+      variantId: l.variantId,
       title: l.title,
+      variantTitle: l.variantTitle,
       sku: l.sku,
       quantity: l.quantity,
       unitPrice: num(l.unitPrice),
@@ -723,11 +757,7 @@ export async function deleteInvoice(id: string): Promise<DeletedInvoiceSummary> 
 
   await db.$transaction(async (tx) => {
     for (const line of existing.lines) {
-      if (!line.productId) continue;
-      await tx.product.update({
-        where: { id: line.productId },
-        data: { stock: { increment: line.quantity } },
-      });
+      await moveStock(tx, line, line.quantity);
     }
     await tx.invoice.delete({ where: { id } });
   });
@@ -776,7 +806,9 @@ export async function restoreDeletedInvoice(
         lines: {
           create: snapshot.lines.map((l, i) => ({
             productId: l.productId || null,
+            variantId: l.variantId || null,
             title: l.title,
+            variantTitle: l.variantTitle ?? "",
             sku: l.sku,
             quantity: l.quantity,
             unitPrice: money2(l.unitPrice),
@@ -788,11 +820,7 @@ export async function restoreDeletedInvoice(
     });
 
     for (const line of snapshot.lines) {
-      if (!line.productId) continue;
-      await tx.product.update({
-        where: { id: line.productId },
-        data: { stock: { decrement: line.quantity } },
-      });
+      await moveStock(tx, line, -line.quantity);
     }
 
     return invoice.id;
