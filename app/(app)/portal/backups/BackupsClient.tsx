@@ -12,11 +12,32 @@ type SavedBackup = {
   label: string;
   sizeBytes: number;
 };
+type LatestBackup = {
+  counts: Record<string, number>;
+  createdAt: string;
+  sizeBytes: number;
+} | null;
 type Retention = {
   keepInDatabase: number;
   keepOffsite: number;
   offsite: { configured: boolean };
 };
+
+// Order + friendly labels for the "last backup contained" panel. Keys map 1:1
+// to buildBackupSnapshot().counts; any extra key falls back to its raw name.
+const COUNT_LABELS: [key: string, label: string][] = [
+  ["products", "products"],
+  ["collections", "collections"],
+  ["customers", "customers"],
+  ["invoices", "invoices"],
+  ["payments", "payments"],
+  ["users", "team members"],
+  ["expenses", "expenses"],
+  ["buying", "buying entries"],
+  ["cashUps", "cash-ups"],
+  ["attendance", "attendance records"],
+  ["auditLogs", "activity log entries"],
+];
 
 export default function BackupsClient() {
   const isOwner = useIsOwner();
@@ -26,6 +47,7 @@ export default function BackupsClient() {
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [backups, setBackups] = useState<SavedBackup[]>([]);
   const [retention, setRetention] = useState<Retention | null>(null);
+  const [latest, setLatest] = useState<LatestBackup>(null);
   const [restoringId, setRestoringId] = useState("");
 
   const loadBackups = useCallback(() => {
@@ -35,6 +57,7 @@ export default function BackupsClient() {
         if (!d) return;
         setBackups(d.backups ?? []);
         setRetention(d);
+        setLatest(d.latest ?? null);
       })
       .catch(() => {});
   }, []);
@@ -213,6 +236,32 @@ export default function BackupsClient() {
               : "Older copies are removed automatically."}
           </p>
         </Card>
+
+        {latest && Object.keys(latest.counts).length > 0 && (
+          <Card>
+            <CardHeader
+              title="Last backup contained"
+              subtitle={`Captured ${fmtWhen(latest.createdAt)} · ${fmtBytes(latest.sizeBytes)}`}
+            />
+            <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+              {[
+                ...COUNT_LABELS.filter(([k]) => k in latest.counts),
+                ...Object.keys(latest.counts)
+                  .filter((k) => !COUNT_LABELS.some(([lk]) => lk === k))
+                  .map((k) => [k, k] as [string, string]),
+              ].map(([k, label]) => (
+                <li key={k} className="flex items-baseline gap-1.5">
+                  <span className="tnum text-base font-semibold text-ink">{latest.counts[k]}</span>
+                  <span className="text-xs text-muted">{label}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs text-muted">
+              Cross-check these against your live totals — if they match, the
+              snapshot has everything.
+            </p>
+          </Card>
+        )}
 
         <Card>
           <div className="flex items-center justify-between">
