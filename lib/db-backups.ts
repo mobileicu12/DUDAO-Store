@@ -76,3 +76,31 @@ export async function getDbBackup(id: string): Promise<unknown | null> {
   const row = await db.backup.findUnique({ where: { id }, select: { data: true } });
   return row?.data ?? null;
 }
+
+/**
+ * What the most recent stored backup actually captured — the row counts baked
+ * into the snapshot ({@link buildBackupSnapshot} writes `counts`). Lets the
+ * Backup screen show "last backup contained N products, M customers…" so the
+ * owner can verify a snapshot at a glance instead of trusting it blindly. Only
+ * the newest row's payload is read; older ones stay untouched.
+ */
+export async function getLatestBackupCounts(): Promise<{
+  counts: Record<string, number>;
+  createdAt: string;
+  sizeBytes: number;
+} | null> {
+  const row = await db.backup.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { data: true, createdAt: true, sizeBytes: true },
+  });
+  if (!row) return null;
+  const data = row.data as { counts?: Record<string, unknown> } | null;
+  const raw = data && typeof data === "object" ? data.counts : undefined;
+  const counts: Record<string, number> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === "number" && Number.isFinite(v)) counts[k] = v;
+    }
+  }
+  return { counts, createdAt: row.createdAt.toISOString(), sizeBytes: row.sizeBytes };
+}

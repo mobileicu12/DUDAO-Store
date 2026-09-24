@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requireOwner } from "@/lib/guard";
-import { listDbBackups, DB_BACKUP_KEEP, OFFSITE_BACKUP_KEEP } from "@/lib/db-backups";
+import {
+  listDbBackups,
+  getLatestBackupCounts,
+  DB_BACKUP_KEEP,
+  OFFSITE_BACKUP_KEEP,
+} from "@/lib/db-backups";
 import { r2Configured } from "@/lib/s3-backup";
 import { driveConfigured } from "@/lib/google-drive";
 
@@ -19,9 +24,10 @@ export async function GET() {
   if (denied) return denied;
 
   try {
-    const backups = await listDbBackups();
+    const [backups, latest] = await Promise.all([listDbBackups(), getLatestBackupCounts()]);
     return NextResponse.json({
       backups,
+      latest,
       keepInDatabase: DB_BACKUP_KEEP,
       keepOffsite: OFFSITE_BACKUP_KEEP,
       offsite: {
