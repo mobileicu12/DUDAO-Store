@@ -71,12 +71,13 @@ type S3Req = {
   query?: Record<string, string>;
   body?: Buffer;
   contentType?: string;
+  bucket?: string; // defaults to the backup bucket (R2_BUCKET)
 };
 
 /** Sign and send one S3 request with SigV4 and a signed payload hash. */
 async function s3Fetch(req: S3Req): Promise<Response> {
   const { host, origin } = endpoint();
-  const bucket = env("R2_BUCKET");
+  const bucket = req.bucket || env("R2_BUCKET");
   const accessKey = env("R2_ACCESS_KEY_ID");
   const secretKey = env("R2_SECRET_ACCESS_KEY");
 
@@ -205,4 +206,32 @@ export async function uploadTextToR2(opts: {
   }
 
   return { key: opts.key, bucket };
+}
+
+/**
+ * Upload a binary object (e.g. a product image) to a chosen bucket. Used by the
+ * image-upload flow, which targets a PUBLIC bucket separate from the private
+ * backups bucket. Returns the stored key; throws on failure.
+ */
+export async function putBinaryToR2(opts: {
+  bucket: string;
+  key: string;
+  body: Buffer;
+  contentType: string;
+}): Promise<{ bucket: string; key: string }> {
+  const put = await s3Fetch({
+    method: "PUT",
+    bucket: opts.bucket,
+    key: opts.key,
+    body: opts.body,
+    contentType: opts.contentType,
+  });
+  if (!put.ok) {
+    const detail = await put.text().catch(() => "");
+    throw new Error(
+      `R2 upload failed (${put.status}). Check the image bucket and API token.` +
+        (detail ? ` ${detail.slice(0, 200)}` : ""),
+    );
+  }
+  return { bucket: opts.bucket, key: opts.key };
 }

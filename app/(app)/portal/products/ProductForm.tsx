@@ -90,6 +90,7 @@ export default function ProductForm({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [allCollections, setAllCollections] = useState<
     { id: string; title: string; group: string }[]
@@ -109,6 +110,29 @@ export default function ProductForm({
 
   const set = (patch: Partial<ProductFormValues>) =>
     setForm((prev) => ({ ...prev, ...patch }));
+
+  // Upload one or more image files to R2 and append the returned public URLs.
+  const uploadFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    const added: { url: string; alt: string }[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+        if (!res.ok || !body.url) throw new Error(body.error ?? "Upload failed.");
+        added.push({ url: body.url, alt: "" });
+      }
+      if (added.length) setForm((prev) => ({ ...prev, images: [...prev.images, ...added] }));
+      toast.success(`${added.length} image${added.length === 1 ? "" : "s"} uploaded.`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const setTier = (key: TierKey, value: string) =>
     setForm((prev) => ({ ...prev, tiers: { ...prev.tiers, [key]: value } }));
@@ -380,12 +404,32 @@ export default function ProductForm({
           </Card>
 
           <Card>
-            <CardHeader title="Images" subtitle="Paste an image URL to add it." />
-            <div className="mt-3 flex gap-2">
+            <CardHeader title="Images" subtitle="Upload a photo, or paste an image URL." />
+
+            {/* Upload from device — stored in R2, saved as a URL on the product. */}
+            <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-line-strong bg-subtle px-4 py-4 text-sm font-medium text-ink-2 transition-colors hover:border-accent hover:text-ink">
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => {
+                  void uploadFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 16V4m0 0 4 4m-4-4L8 8M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+              {uploading ? "Uploading…" : "Upload photo(s)"}
+            </label>
+
+            <div className="mt-2 flex gap-2">
               <Input
                 value={imageUrl}
                 onChange={(e) => setImageUrl(e.target.value)}
-                placeholder="https://…"
+                placeholder="or paste an image URL…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && imageUrl.trim()) {
                     e.preventDefault();
