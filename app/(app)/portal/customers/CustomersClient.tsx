@@ -740,18 +740,16 @@ function AddCustomerModal({
         <Field label="Company">
           <Input value={company} onChange={(e) => setCompany(e.target.value)} />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
-            <PhoneField value={phone} onChange={setPhone} />
-          </Field>
-          <Field label="Email">
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </Field>
-        </div>
+        <Field label="Phone">
+          <PhoneField value={phone} onChange={setPhone} />
+        </Field>
+        <Field label="Email">
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </Field>
         <Field label="Address">
           <Input
             value={address}
