@@ -35,25 +35,31 @@ export function PhoneField({
 
   return (
     <div className="flex gap-2">
-      <Select
-        aria-label="Country dial code"
-        value={iso}
-        onChange={(e) => {
-          setIso(e.target.value);
-          emit(e.target.value, number);
-        }}
-        className="w-28 shrink-0"
-      >
-        {COUNTRIES.map((c) => (
-          <option key={c.iso} value={c.iso}>
-            {c.flag} {c.dial}
-          </option>
-        ))}
-      </Select>
+      {/* Fixed-width wrapper: the Select carries w-full from FIELD_BASE, which
+          would otherwise beat a `w-28` class on it (cx is a plain join, not
+          tailwind-merge) and swallow the whole row — leaving no room to type the
+          number. Constraining it here keeps the number input visible. */}
+      <div className="w-28 shrink-0">
+        <Select
+          aria-label="Country dial code"
+          value={iso}
+          onChange={(e) => {
+            setIso(e.target.value);
+            emit(e.target.value, number);
+          }}
+        >
+          {COUNTRIES.map((c) => (
+            <option key={c.iso} value={c.iso}>
+              {c.flag} {c.dial}
+            </option>
+          ))}
+        </Select>
+      </div>
       <Input
         id={id}
         type="tel"
         inputMode="tel"
+        className="min-w-0 flex-1"
         value={number}
         placeholder={placeholder}
         onChange={(e) => {
