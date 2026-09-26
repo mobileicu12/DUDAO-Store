@@ -412,6 +412,12 @@ export type ProductInput = {
   channels?: ChannelKey[];
   images?: { url: string; alt?: string }[];
   collectionIds?: string[];
+  /**
+   * When present, replaces the product's variant set (see setProductVariants).
+   * An empty array clears variants and leaves the product flat; undefined leaves
+   * the existing variants untouched.
+   */
+  variants?: VariantInput[];
 };
 
 const tierData = (tiers: TierPrices | undefined) =>
@@ -476,9 +482,15 @@ export async function createProduct(input: ProductInput): Promise<ProductRecord>
     include: withFirstImage,
   });
 
+  // Optional variants — replaces the (empty) set and recomputes the aggregate.
+  if (input.variants?.length) {
+    await setProductVariants(row.id, input.variants);
+  }
+
   // Auto-file the new product into any smart-rule collection it matches.
   await applySmartRules([row.id]).catch(() => {});
-  return toRecord(row);
+  // Re-read so the returned record reflects any variant-driven stock/price.
+  return (await getProduct(row.id)) ?? toRecord(row);
 }
 
 export async function updateProduct(
@@ -549,9 +561,15 @@ export async function updateProduct(
     include: withFirstImage,
   });
 
+  // Variants: replace the set when the caller sent one (empty array clears them).
+  if (input.variants !== undefined) {
+    await setProductVariants(id, input.variants);
+  }
+
   // A type/brand/tag edit may bring the product into a smart collection.
   await applySmartRules([row.id]).catch(() => {});
-  return toRecord(row);
+  // Re-read so variant-driven stock/price aggregates are reflected.
+  return (await getProduct(id)) ?? toRecord(row);
 }
 
 /* -------------------------------------------------------------------------- */

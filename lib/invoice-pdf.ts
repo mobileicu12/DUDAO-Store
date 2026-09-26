@@ -42,6 +42,7 @@ export type InvoiceDoc = {
   };
   lines: {
     title: string;
+    variantTitle?: string;
     sku: string;
     quantity: number;
     unitPrice: number;
@@ -179,7 +180,7 @@ export function buildInvoiceDoc(
     margin: { left: MARGIN, right: MARGIN },
     head: [["Description", "SKU", "Qty", "Unit", "Amount"]],
     body: invoice.lines.map((l) => [
-      l.title,
+      l.variantTitle ? `${l.title} — ${l.variantTitle}` : l.title,
       l.sku || "—",
       String(l.quantity),
       fmt(l.unitPrice, business.currency),

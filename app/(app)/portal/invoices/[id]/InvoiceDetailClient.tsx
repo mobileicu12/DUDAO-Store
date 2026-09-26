@@ -12,7 +12,7 @@ import {
 import { segmentDef } from "@/lib/segments";
 import { waLink } from "@/lib/wa-link";
 import type { InvoiceRecord } from "@/lib/billing";
-import type { ProductRecord } from "@/lib/products";
+import type { ProductRecord, SellableHit } from "@/lib/products";
 import {
   Alert,
   Badge,
@@ -35,7 +35,9 @@ import { useToast } from "@/components/ui/Toast";
 type DraftLine = {
   key: string;
   productId: string | null;
+  variantId: string | null;
   title: string;
+  variantTitle: string;
   sku: string;
   quantity: number;
   unitPrice: number;
@@ -77,7 +79,9 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
       data.lines.map((l) => ({
         key: `k${seq++}`,
         productId: l.productId,
+        variantId: l.variantId,
         title: l.title,
+        variantTitle: l.variantTitle,
         sku: l.sku,
         quantity: l.quantity,
         unitPrice: l.unitPrice,
@@ -121,7 +125,9 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
         body: JSON.stringify({
           lines: lines.map((l) => ({
             productId: l.productId,
+            variantId: l.variantId,
             title: l.title,
+            variantTitle: l.variantTitle,
             sku: l.sku,
             quantity: l.quantity,
             unitPrice: l.unitPrice,
@@ -358,6 +364,7 @@ export default function InvoiceDetailClient({ id }: { id: string }) {
                       <p className="truncate text-sm font-medium text-ink">{l.title}</p>
                     )}
                     <p className="truncate text-xs text-muted">
+                      {l.variantTitle && <span className="text-ink-2">{l.variantTitle} · </span>}
                       {l.sku || (l.productId ? "no SKU" : "custom item")}
                     </p>
                   </div>
@@ -758,7 +765,7 @@ function AddLineModal({
 }) {
   const [tab, setTab] = useState<"search" | "custom">("search");
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<ProductRecord[]>([]);
+  const [results, setResults] = useState<SellableHit[]>([]);
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
 
@@ -766,12 +773,12 @@ function AddLineModal({
     if (!open || tab !== "search") return;
     const t = setTimeout(async () => {
       if (!q.trim()) return setResults([]);
-      const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`, {
+      const res = await fetch(`/api/products/search?mode=sellable&q=${encodeURIComponent(q)}`, {
         cache: "no-store",
       });
       if (res.ok) {
-        const d = (await res.json()) as { products: ProductRecord[] };
-        setResults(d.products);
+        const d = (await res.json()) as { hits: SellableHit[] };
+        setResults(d.hits);
       }
     }, 200);
     return () => clearTimeout(t);
@@ -805,13 +812,15 @@ function AddLineModal({
           />
           <ul className="mt-3 max-h-64 divide-y divide-line overflow-y-auto">
             {results.map((p) => (
-              <li key={p.id}>
+              <li key={`${p.productId}:${p.variantId ?? ""}`}>
                 <button
                   type="button"
                   onClick={() =>
                     onAdd({
-                      productId: p.id,
+                      productId: p.productId,
+                      variantId: p.variantId,
                       title: p.title,
+                      variantTitle: p.variantTitle,
                       sku: p.sku,
                       quantity: 1,
                       unitPrice: p.price,
@@ -821,6 +830,9 @@ function AddLineModal({
                 >
                   <span className="min-w-0 truncate text-sm text-ink">
                     {p.title}
+                    {p.variantTitle && (
+                      <span className="ml-1.5 text-xs text-muted">· {p.variantTitle}</span>
+                    )}
                   </span>
                   <span className="tnum shrink-0 text-sm font-medium">
                     {money(p.price)}
@@ -856,7 +868,9 @@ function AddLineModal({
             onClick={() =>
               onAdd({
                 productId: null,
+                variantId: null,
                 title: title.trim(),
+                variantTitle: "",
                 sku: "",
                 quantity: 1,
                 unitPrice: Number(price) || 0,
