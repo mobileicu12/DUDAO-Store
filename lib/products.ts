@@ -39,6 +39,8 @@ export type ProductRecord = {
   stock: number;
   imageUrl: string | null;
   channels: ChannelKey[];
+  /** True when the product sells through variants (must be chosen before buying). */
+  hasVariants: boolean;
   updatedAt: string;
 };
 
@@ -69,6 +71,11 @@ export const toRecord = (p: ProductRow): ProductRecord => ({
   stock: p.stock,
   imageUrl: p.images[0]?.url ?? null,
   channels: channelsFromTags(p.tags),
+  // Detected only when the caller included variants or their count; defaults to
+  // false so existing queries that don't need it are unaffected.
+  hasVariants:
+    ((p as { _count?: { variants?: number } })._count?.variants ?? 0) > 0 ||
+    ((p as { variants?: unknown[] }).variants?.length ?? 0) > 0,
   updatedAt: p.updatedAt.toISOString(),
 });
 

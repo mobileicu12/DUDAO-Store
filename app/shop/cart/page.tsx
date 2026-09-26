@@ -43,7 +43,10 @@ export default function CartPage() {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-ink">{item.title}</p>
+                <p className="truncate text-sm font-medium text-ink">
+                  {item.title}
+                  {item.variantTitle ? <span className="text-muted"> · {item.variantTitle}</span> : null}
+                </p>
                 <p className="tnum mt-0.5 text-xs text-muted">{money(item.price)} each</p>
               </div>
               <div className="flex h-9 items-center rounded-md border border-line-strong bg-surface">

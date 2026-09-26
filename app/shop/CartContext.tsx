@@ -11,7 +11,11 @@ import {
 import type { ReactNode } from "react";
 
 export type CartItem = {
+  /** Unique basket-line key: productId, or `productId:variantId` for a variant. */
   id: string;
+  productId: string;
+  variantId: string | null;
+  variantTitle: string;
   title: string;
   imageUrl: string | null;
   price: number;

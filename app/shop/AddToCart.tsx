@@ -40,7 +40,18 @@ export default function AddToCart({ product, isTrade, inStock, withQty = false }
   }
 
   const onAdd = () => {
-    add({ id: product.id, title: product.title, imageUrl: product.imageUrl, price: product.price }, qty);
+    add(
+      {
+        id: product.id,
+        productId: product.id,
+        variantId: null,
+        variantTitle: "",
+        title: product.title,
+        imageUrl: product.imageUrl,
+        price: product.price,
+      },
+      qty,
+    );
     setAdded(true);
     setTimeout(() => setAdded(false), 1400);
   };

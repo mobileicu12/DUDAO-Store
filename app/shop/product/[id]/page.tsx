@@ -4,6 +4,7 @@ import { money } from "@/lib/business";
 import { currentTradeCustomer, shopProduct, wholesalePrice } from "@/lib/storefront";
 import AddToCart from "../../AddToCart";
 import ProductGallery from "../../ProductGallery";
+import VariantBuyBox from "../../VariantBuyBox";
 
 export const dynamic = "force-dynamic";
 
@@ -69,30 +70,41 @@ export default async function ProductPage({
 
           <div className="mt-6 rounded-lg border border-line bg-surface p-5">
             {isTrade ? (
-              <>
-                <p className="text-xs font-medium tracking-wide text-muted uppercase">
-                  Your wholesale price
-                </p>
-                <p className="tnum mt-1 text-3xl font-semibold tracking-tight text-ink">
-                  {money(wholesalePrice(product))}
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  {product.stock > 0 ? `${product.stock} in stock` : "Out of stock"}
-                </p>
-                <div className="mt-4">
-                  <AddToCart
-                    product={{
-                      id: product.id,
-                      title: product.title,
-                      imageUrl: product.imageUrl,
-                      price: wholesalePrice(product),
-                    }}
-                    isTrade={isTrade}
-                    inStock={product.stock > 0}
-                    withQty
-                  />
-                </div>
-              </>
+              detail.variants.length > 0 ? (
+                <VariantBuyBox
+                  product={{
+                    id: product.id,
+                    title: product.title,
+                    imageUrl: product.imageUrl,
+                  }}
+                  variants={detail.variants}
+                />
+              ) : (
+                <>
+                  <p className="text-xs font-medium tracking-wide text-muted uppercase">
+                    Your wholesale price
+                  </p>
+                  <p className="tnum mt-1 text-3xl font-semibold tracking-tight text-ink">
+                    {money(wholesalePrice(product))}
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    {product.stock > 0 ? `${product.stock} in stock` : "Out of stock"}
+                  </p>
+                  <div className="mt-4">
+                    <AddToCart
+                      product={{
+                        id: product.id,
+                        title: product.title,
+                        imageUrl: product.imageUrl,
+                        price: wholesalePrice(product),
+                      }}
+                      isTrade={isTrade}
+                      inStock={product.stock > 0}
+                      withQty
+                    />
+                  </div>
+                </>
+              )
             ) : (
               <>
                 <p className="text-sm font-semibold text-ink">🔒 Trade account required</p>
