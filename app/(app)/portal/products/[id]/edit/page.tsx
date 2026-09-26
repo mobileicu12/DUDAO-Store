@@ -23,6 +23,7 @@ export default async function EditProductPage({
     include: {
       images: { orderBy: { position: "asc" } },
       collections: { select: { collectionId: true } },
+      variants: { orderBy: { position: "asc" } },
     },
   });
 
@@ -54,6 +55,21 @@ export default async function EditProductPage({
     // deleted from the wrong place.
     tags: product.tags.filter((t) => !isChannelTag(t)),
     collectionIds: product.collections.map((c) => c.collectionId),
+    variants: product.variants.map((v) => ({
+      id: v.id,
+      title: v.title,
+      sku: v.sku,
+      barcode: v.barcode,
+      price: String(num(v.price)),
+      compareAtPrice: str(numOrNull(v.compareAtPrice)),
+      tiers: {
+        wholesale: str(numOrNull(v.priceWholesale)),
+        shop: str(numOrNull(v.priceShop)),
+        ebay: str(numOrNull(v.priceEbay)),
+        amazon: str(numOrNull(v.priceAmazon)),
+      },
+      stock: String(v.stock),
+    })),
   };
 
   return <ProductForm productId={id} initial={initial} />;

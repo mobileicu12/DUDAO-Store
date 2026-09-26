@@ -36,6 +36,28 @@ export const PRODUCT_TYPE_CHOICES = [
   "Other",
 ];
 
+/** One variant row in the editor. `id` is kept so a save preserves its history. */
+export type VariantFormRow = {
+  id?: string;
+  title: string;
+  sku: string;
+  barcode: string;
+  price: string;
+  compareAtPrice: string;
+  tiers: Record<TierKey, string>;
+  stock: string;
+};
+
+export const EMPTY_VARIANT: VariantFormRow = {
+  title: "",
+  sku: "",
+  barcode: "",
+  price: "",
+  compareAtPrice: "",
+  tiers: { wholesale: "", shop: "", ebay: "", amazon: "" },
+  stock: "0",
+};
+
 export type ProductFormValues = {
   title: string;
   descriptionHtml: string;
@@ -54,6 +76,7 @@ export type ProductFormValues = {
   channels: ChannelKey[];
   tags: string[];
   collectionIds: string[];
+  variants: VariantFormRow[];
 };
 
 export const EMPTY_PRODUCT: ProductFormValues = {
@@ -74,6 +97,7 @@ export const EMPTY_PRODUCT: ProductFormValues = {
   channels: [],
   tags: [],
   collectionIds: [],
+  variants: [],
 };
 
 export default function ProductForm({
@@ -159,6 +183,34 @@ export default function ProductForm({
         : [...prev.collectionIds, id],
     }));
 
+  // --- Variants ---
+  const hasVariants = form.variants.length > 0;
+
+  const addVariant = () =>
+    setForm((prev) => ({ ...prev, variants: [...prev.variants, { ...EMPTY_VARIANT }] }));
+  const removeVariant = (i: number) =>
+    setForm((prev) => ({ ...prev, variants: prev.variants.filter((_, j) => j !== i) }));
+  const setVariant = (i: number, patch: Partial<VariantFormRow>) =>
+    setForm((prev) => ({
+      ...prev,
+      variants: prev.variants.map((v, j) => (j === i ? { ...v, ...patch } : v)),
+    }));
+  const setVariantTier = (i: number, key: TierKey, value: string) =>
+    setForm((prev) => ({
+      ...prev,
+      variants: prev.variants.map((v, j) =>
+        j === i ? { ...v, tiers: { ...v.tiers, [key]: value } } : v,
+      ),
+    }));
+
+  // With variants, the product's own stock/price are derived: stock is the sum
+  // and the base price is the lowest ("from"). Shown read-only so there's no
+  // double-entry, and computed the same way the server does.
+  const variantStockSum = form.variants.reduce((s, v) => s + (Math.round(Number(v.stock)) || 0), 0);
+  const variantMinPrice = hasVariants
+    ? Math.min(...form.variants.map((v) => Number(v.price) || 0))
+    : 0;
+
   const basePrice = Number(form.price) || 0;
 
   const tierPrices: TierPrices = {
@@ -184,8 +236,36 @@ export default function ProductForm({
       return;
     }
 
+    // Validate variants before saving so a bad row surfaces here, not server-side.
+    for (const v of form.variants) {
+      if (!v.title.trim()) {
+        toast.error("Every variant needs a name (or remove the empty row).");
+        return;
+      }
+      if (v.price === "" || !(Number(v.price) >= 0)) {
+        toast.error(`Enter a valid price for the "${v.title || "unnamed"}" variant.`);
+        return;
+      }
+    }
+
     setSaving(true);
     try {
+      const variantsPayload = form.variants.map((v) => ({
+        id: v.id,
+        title: v.title,
+        sku: v.sku,
+        barcode: v.barcode,
+        price: Number(v.price) || 0,
+        compareAtPrice: v.compareAtPrice === "" ? null : Number(v.compareAtPrice),
+        tiers: {
+          wholesale: v.tiers.wholesale === "" ? null : Number(v.tiers.wholesale),
+          shop: v.tiers.shop === "" ? null : Number(v.tiers.shop),
+          ebay: v.tiers.ebay === "" ? null : Number(v.tiers.ebay),
+          amazon: v.tiers.amazon === "" ? null : Number(v.tiers.amazon),
+        },
+        stock: Math.round(Number(v.stock)) || 0,
+      }));
+
       const payload = {
         title: form.title,
         descriptionHtml: form.descriptionHtml,
@@ -196,15 +276,20 @@ export default function ProductForm({
         productType: form.productType,
         sku: form.sku,
         barcode: form.barcode,
-        price: Number(form.price) || 0,
+        // With variants the product's own price/stock are the derived "from"
+        // price and the sum; the server recomputes them too, this keeps the
+        // first write consistent.
+        price: hasVariants ? variantMinPrice : Number(form.price) || 0,
         compareAtPrice:
           form.compareAtPrice === "" ? null : Number(form.compareAtPrice),
         tiers: tierPrices,
-        stock: Number(form.stock) || 0,
+        stock: hasVariants ? variantStockSum : Number(form.stock) || 0,
         images: form.images,
         channels: form.channels,
         tags: form.tags,
         collectionIds: form.collectionIds,
+        // Always send the full set: upsert-by-id preserves history, [] clears.
+        variants: variantsPayload,
       };
 
       const res = await fetch(
@@ -342,13 +427,18 @@ export default function ProductForm({
               subtitle="Leave a tier blank and it sells at the base price."
             />
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Base price" required>
+              <Field
+                label="Base price"
+                required={!hasVariants}
+                hint={hasVariants ? "From the lowest variant price." : undefined}
+              >
                 <Input
                   type="number"
                   step="0.01"
                   min="0"
-                  value={form.price}
+                  value={hasVariants ? String(variantMinPrice) : form.price}
                   onChange={(e) => set({ price: e.target.value })}
+                  disabled={hasVariants}
                   placeholder="0.00"
                 />
               </Field>
@@ -401,6 +491,104 @@ export default function ProductForm({
                 );
               })}
             </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Variants"
+              subtitle="Optional. Add variants (e.g. grade A/B/C, colour, capacity) — each has its own SKU, price and stock, and the till sells each one separately."
+            />
+            {!hasVariants ? (
+              <div className="mt-3">
+                <Button onClick={addVariant}>+ Add variants</Button>
+                <p className="mt-2 text-xs text-muted">
+                  Leave this empty for a simple product sold on the SKU, price and
+                  stock above.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {form.variants.map((v, i) => (
+                  <div key={i} className="rounded-lg border border-line p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                        Variant {i + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeVariant(i)}
+                        className="text-xs font-medium text-danger hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Field label="Name" required>
+                        <Input
+                          value={v.title}
+                          onChange={(e) => setVariant(i, { title: e.target.value })}
+                          placeholder="Grade A"
+                        />
+                      </Field>
+                      <Field label="SKU">
+                        <Input value={v.sku} onChange={(e) => setVariant(i, { sku: e.target.value })} />
+                      </Field>
+                      <Field label="Price" required>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={v.price}
+                          onChange={(e) => setVariant(i, { price: e.target.value })}
+                          placeholder="0.00"
+                        />
+                      </Field>
+                      <Field label="Stock">
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={v.stock}
+                          onChange={(e) => setVariant(i, { stock: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Barcode">
+                        <Input value={v.barcode} onChange={(e) => setVariant(i, { barcode: e.target.value })} />
+                      </Field>
+                      <Field label="Compare at">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={v.compareAtPrice}
+                          onChange={(e) => setVariant(i, { compareAtPrice: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                      {PRICE_TIERS.map((tier) => (
+                        <Field key={tier.key} label={tier.label}>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={v.tiers[tier.key]}
+                            onChange={(e) => setVariantTier(i, tier.key, e.target.value)}
+                            placeholder={v.price ? money(Number(v.price)) : "base"}
+                          />
+                        </Field>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-3">
+                  <Button onClick={addVariant}>+ Add another variant</Button>
+                  <span className="text-xs text-muted">
+                    Total stock {variantStockSum} · from {money(variantMinPrice)}
+                  </span>
+                </div>
+              </div>
+            )}
           </Card>
 
           <Card>
@@ -499,13 +687,17 @@ export default function ProductForm({
                   <option value="DRAFT">Draft — hidden from the till</option>
                 </Select>
               </Field>
-              <Field label="Stock on hand">
+              <Field
+                label="Stock on hand"
+                hint={hasVariants ? "Total across variants — edit per variant." : undefined}
+              >
                 <Input
                   type="number"
                   step="1"
                   min="0"
-                  value={form.stock}
+                  value={hasVariants ? String(variantStockSum) : form.stock}
                   onChange={(e) => set({ stock: e.target.value })}
+                  disabled={hasVariants}
                 />
               </Field>
             </div>

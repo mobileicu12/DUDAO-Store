@@ -10,7 +10,7 @@ import {
   PAYMENT_METHODS,
   type PaymentMethod,
 } from "@/lib/billing-shared";
-import type { ProductRecord } from "@/lib/products";
+import type { ProductRecord, SellableHit } from "@/lib/products";
 import type { CustomerSummary } from "@/lib/customers";
 import {
   Alert,
@@ -34,7 +34,11 @@ type CartLine = {
   /** Local row key — two lines can share a product after a manual split. */
   key: string;
   productId: string | null;
+  /** Set when the row is a specific variant, so stock comes off the right one. */
+  variantId: string | null;
   title: string;
+  /** The variant's name (e.g. "Grade A"), shown under the title and snapshotted. */
+  variantTitle: string;
   sku: string;
   quantity: number;
   unitPrice: number;
@@ -84,7 +88,7 @@ export default function TillClient({
   const [scanCode, setScanCode] = useState("");
 
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<ProductRecord[]>([]);
+  const [results, setResults] = useState<SellableHit[]>([]);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -159,12 +163,12 @@ export default function TillClient({
       setSearching(true);
       try {
         const res = await fetch(
-          `/api/products/search?q=${encodeURIComponent(term)}`,
+          `/api/products/search?mode=sellable&q=${encodeURIComponent(term)}`,
           { cache: "no-store" },
         );
         if (res.ok) {
-          const data = (await res.json()) as { products: ProductRecord[] };
-          setResults(data.products);
+          const data = (await res.json()) as { hits: SellableHit[] };
+          setResults(data.hits);
         }
       } finally {
         setSearching(false);
@@ -190,13 +194,16 @@ export default function TillClient({
   );
 
   const addProduct = useCallback(
-    (p: ProductRecord) => {
+    (p: SellableHit) => {
       setLines((prev) => {
-        // Same product scanned twice bumps the quantity rather than adding a
-        // second row — unless staff have overridden that row's price, in which
-        // case they meant them to be separate.
+        // The same sellable unit scanned twice bumps the quantity rather than
+        // adding a second row — matched on product AND variant, so two variants
+        // of one product stay separate. A price-overridden row is left alone.
         const existing = prev.find(
-          (l) => l.productId === p.id && !l.priceOverridden,
+          (l) =>
+            l.productId === p.productId &&
+            l.variantId === p.variantId &&
+            !l.priceOverridden,
         );
         if (existing) {
           return prev.map((l) =>
@@ -207,8 +214,10 @@ export default function TillClient({
           ...prev,
           {
             key: `k${keySeq++}`,
-            productId: p.id,
+            productId: p.productId,
+            variantId: p.variantId,
             title: p.title,
+            variantTitle: p.variantTitle,
             sku: p.sku,
             quantity: 1,
             unitPrice: priceFor(p.price, p.tiers),
@@ -285,17 +294,17 @@ export default function TillClient({
     async (code: string) => {
       try {
         const res = await fetch(
-          `/api/barcodes/lookup?code=${encodeURIComponent(code)}`,
+          `/api/barcodes/lookup?mode=sellable&code=${encodeURIComponent(code)}`,
           { cache: "no-store" },
         );
         if (!res.ok) throw new Error();
-        const data = (await res.json()) as { product: ProductRecord | null };
-        if (!data.product) {
-          toast.error(`Nothing found for ${code}.`, "Check the code or search by name.");
+        const data = (await res.json()) as { hit: SellableHit | null };
+        if (!data.hit) {
+          toast.error(`Nothing found for ${code}.`, "If it's a variant, search by name and pick it.");
           return;
         }
-        addProduct(data.product);
-        toast.success(`Added ${data.product.title}.`);
+        addProduct(data.hit);
+        toast.success(`Added ${data.hit.title}${data.hit.variantTitle ? ` · ${data.hit.variantTitle}` : ""}.`);
       } catch {
         toast.error("Could not look that barcode up.");
       }
@@ -320,7 +329,9 @@ export default function TillClient({
         body: JSON.stringify({
           lines: lines.map((l) => ({
             productId: l.productId,
+            variantId: l.variantId,
             title: l.title,
+            variantTitle: l.variantTitle,
             sku: l.sku,
             quantity: l.quantity,
             unitPrice: l.unitPrice,
@@ -405,13 +416,17 @@ export default function TillClient({
       const inv = await res.json();
       if (!res.ok) throw new Error(inv.error ?? "Couldn't open that invoice.");
 
-      const merged = (inv.lines as { productId: string | null; title: string; sku: string; quantity: number; unitPrice: number }[]).map(
-        (l) => ({ productId: l.productId, title: l.title, sku: l.sku, quantity: l.quantity, unitPrice: Number(l.unitPrice) }),
+      const merged = (inv.lines as { productId: string | null; variantId: string | null; title: string; variantTitle: string; sku: string; quantity: number; unitPrice: number }[]).map(
+        (l) => ({ productId: l.productId, variantId: l.variantId, title: l.title, variantTitle: l.variantTitle, sku: l.sku, quantity: l.quantity, unitPrice: Number(l.unitPrice) }),
       );
       for (const nl of lines) {
-        const hit = nl.productId ? merged.find((m) => m.productId === nl.productId) : null;
+        // Merge by product AND variant, so two variants of one product stay
+        // as separate lines on the running tab.
+        const hit = nl.productId
+          ? merged.find((m) => m.productId === nl.productId && m.variantId === nl.variantId)
+          : null;
         if (hit) hit.quantity += nl.quantity;
-        else merged.push({ productId: nl.productId, title: nl.title, sku: nl.sku, quantity: nl.quantity, unitPrice: nl.unitPrice });
+        else merged.push({ productId: nl.productId, variantId: nl.variantId, title: nl.title, variantTitle: nl.variantTitle, sku: nl.sku, quantity: nl.quantity, unitPrice: nl.unitPrice });
       }
 
       const upRes = await fetch(`/api/billing/${encodeURIComponent(addToInvoiceId)}`, {
@@ -588,7 +603,7 @@ export default function TillClient({
           <Card padded={false} className="mb-3 overflow-hidden">
             <ul className="max-h-72 divide-y divide-line overflow-y-auto">
               {results.map((p, i) => (
-                <li key={p.id}>
+                <li key={`${p.productId}:${p.variantId ?? ""}`}>
                   <button
                     type="button"
                     onClick={() => addProduct(p)}
@@ -605,6 +620,9 @@ export default function TillClient({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-ink">
                         {p.title}
+                        {p.variantTitle && (
+                          <span className="ml-1.5 text-xs font-normal text-muted">· {p.variantTitle}</span>
+                        )}
                       </span>
                       <span className="block truncate text-xs text-muted">
                         {p.sku || "no SKU"} · {p.stock} in stock
@@ -641,6 +659,9 @@ export default function TillClient({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-ink">
                       {l.title}
+                      {l.variantTitle && (
+                        <span className="ml-1.5 text-xs font-normal text-muted">· {l.variantTitle}</span>
+                      )}
                     </p>
                     <p className="truncate text-xs text-muted">
                       {l.sku || (l.productId ? "no SKU" : "custom item")}
@@ -1003,7 +1024,9 @@ export default function TillClient({
             {
               key: `k${keySeq++}`,
               productId: null,
+              variantId: null,
               title,
+              variantTitle: "",
               sku: "",
               quantity: qty,
               unitPrice: price,

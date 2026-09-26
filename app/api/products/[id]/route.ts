@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { errorResponse, requirePermission } from "@/lib/guard";
 import { db } from "@/lib/db";
-import { bulkDelete, getProduct, updateProduct } from "@/lib/products";
+import { bulkDelete, getProduct, getProductVariants, updateProduct } from "@/lib/products";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,12 +31,13 @@ export async function GET(_req: Request, { params }: Ctx) {
       );
     }
 
-    const base = await getProduct(id);
+    const [base, variants] = await Promise.all([getProduct(id), getProductVariants(id)]);
     return NextResponse.json({
       ...base,
       descriptionHtml: row.descriptionHtml,
       images: row.images.map((i) => ({ url: i.url, alt: i.alt })),
       collectionIds: row.collections.map((c) => c.collectionId),
+      variants,
     });
   } catch (err) {
     return errorResponse(err, "open this product");
