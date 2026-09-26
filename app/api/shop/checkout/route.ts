@@ -37,7 +37,11 @@ export async function POST(req: Request) {
   const lines = Array.isArray(body.lines)
     ? (body.lines as unknown[]).map((l) => {
         const o = (l ?? {}) as Record<string, unknown>;
-        return { productId: String(o.productId ?? ""), quantity: Number(o.quantity ?? 0) };
+        return {
+          productId: String(o.productId ?? ""),
+          variantId: o.variantId ? String(o.variantId) : null,
+          quantity: Number(o.quantity ?? 0),
+        };
       })
     : [];
 

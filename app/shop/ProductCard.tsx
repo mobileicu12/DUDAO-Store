@@ -38,6 +38,7 @@ export default function ProductCard({
         <div className="mt-auto">
           {isTrade ? (
             <p className="tnum text-base font-semibold text-ink">
+              {p.hasVariants && <span className="text-xs font-normal text-muted">from </span>}
               {money(wholesalePrice(p))}
             </p>
           ) : (
@@ -47,11 +48,20 @@ export default function ProductCard({
             <p className="text-xs font-medium text-danger">Out of stock</p>
           )}
         </div>
-        <AddToCart
-          product={{ id: p.id, title: p.title, imageUrl: p.imageUrl, price: wholesalePrice(p) }}
-          isTrade={isTrade}
-          inStock={p.stock > 0}
-        />
+        {p.hasVariants ? (
+          <Link
+            href={`/shop/product/${p.id}`}
+            className="flex h-10 items-center justify-center rounded-md border border-line-strong bg-surface px-4 text-sm font-medium text-ink-2 transition-colors hover:bg-subtle"
+          >
+            {isTrade ? "Choose options" : "View options"}
+          </Link>
+        ) : (
+          <AddToCart
+            product={{ id: p.id, title: p.title, imageUrl: p.imageUrl, price: wholesalePrice(p) }}
+            isTrade={isTrade}
+            inStock={p.stock > 0}
+          />
+        )}
       </div>
     </div>
   );

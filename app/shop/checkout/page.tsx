@@ -43,7 +43,7 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           method,
           note,
-          lines: items.map((i) => ({ productId: i.id, quantity: i.quantity })),
+          lines: items.map((i) => ({ productId: i.productId, variantId: i.variantId, quantity: i.quantity })),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -184,6 +184,7 @@ export default function CheckoutPage() {
               <li key={i.id} className="flex justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate text-ink-2">
                   {i.quantity} × {i.title}
+                  {i.variantTitle ? ` · ${i.variantTitle}` : ""}
                 </span>
                 <span className="tnum shrink-0 font-medium text-ink">
                   {money(i.price * i.quantity)}

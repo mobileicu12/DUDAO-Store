@@ -127,7 +127,7 @@ export async function shopProducts(args: ShopListArgs = {}): Promise<ShopListRes
   const [rows, total] = await Promise.all([
     db.product.findMany({
       where,
-      include: withFirstImage,
+      include: { ...withFirstImage, _count: { select: { variants: true } } },
       orderBy: { title: "asc" },
       take,
       skip: args.skip ?? 0,
@@ -139,25 +139,52 @@ export async function shopProducts(args: ShopListArgs = {}): Promise<ShopListRes
 }
 
 /** A single active product for its detail page. */
+export type ShopVariant = {
+  id: string;
+  title: string;
+  sku: string;
+  /** The wholesale price the trade customer pays for this variant. */
+  wholesale: number;
+  stock: number;
+};
+
 export type ShopProductDetail = {
   record: ProductRecord;
   /** Every image on the product, in order, for the gallery. */
   gallery: string[];
   descriptionHtml: string;
+  /** Variants to choose from; empty for a flat product. */
+  variants: ShopVariant[];
 };
 
 export async function shopProduct(id: string): Promise<ShopProductDetail | null> {
   const row = await db.product.findFirst({
     where: { id, status: "ACTIVE" },
-    include: { images: { orderBy: { position: "asc" } } },
+    include: {
+      images: { orderBy: { position: "asc" } },
+      variants: { orderBy: { position: "asc" } },
+    },
   });
   if (!row) return null;
   const gallery = row.images.map((img) => img.url).filter(Boolean);
+  const variants: ShopVariant[] = row.variants.map((v) => ({
+    id: v.id,
+    title: v.title,
+    sku: v.sku,
+    wholesale: priceForContext(num(v.price), {
+      wholesale: numOrNull(v.priceWholesale),
+      shop: numOrNull(v.priceShop),
+      ebay: numOrNull(v.priceEbay),
+      amazon: numOrNull(v.priceAmazon),
+    }, { wholesale: true }),
+    stock: v.stock,
+  }));
   // toRecord keeps the first image for `imageUrl`; the gallery carries them all.
   return {
     record: toRecord({ ...row, images: row.images.slice(0, 1) }),
     gallery,
     descriptionHtml: row.descriptionHtml,
+    variants,
   };
 }
 
@@ -214,7 +241,7 @@ export async function shopCollection(handle: string): Promise<ShopCollection | n
         where: { product: { status: "ACTIVE" } },
         orderBy: { position: "asc" },
         include: {
-          product: { include: { images: { orderBy: { position: "asc" }, take: 1 } } },
+          product: { include: { images: { orderBy: { position: "asc" }, take: 1 }, _count: { select: { variants: true } } } },
         },
       },
     },
@@ -242,7 +269,7 @@ export async function shopProductTypes(): Promise<string[]> {
   return rows.map((r) => r.productType);
 }
 
-export type CheckoutLine = { productId: string; quantity: number };
+export type CheckoutLine = { productId: string; variantId?: string | null; quantity: number };
 export type CheckoutMethod = "cash" | "bank" | "account";
 
 const METHOD_LABEL: Record<CheckoutMethod, string> = {
@@ -264,7 +291,11 @@ export async function createTradeCheckout(args: {
   note?: string;
 }) {
   const wanted = args.lines
-    .map((l) => ({ productId: String(l.productId), quantity: Math.floor(Number(l.quantity)) }))
+    .map((l) => ({
+      productId: String(l.productId),
+      variantId: l.variantId ? String(l.variantId) : null,
+      quantity: Math.floor(Number(l.quantity)),
+    }))
     .filter((l) => l.productId && l.quantity > 0);
 
   if (wanted.length === 0) {
@@ -273,20 +304,46 @@ export async function createTradeCheckout(args: {
 
   const products = await db.product.findMany({
     where: { id: { in: wanted.map((l) => l.productId) }, status: "ACTIVE" },
-    include: withFirstImage,
+    include: { ...withFirstImage, variants: true },
   });
-  const byId = new Map(products.map((p) => [p.id, toRecord(p)]));
+  const byId = new Map(products.map((p) => [p.id, p]));
 
   const lines = wanted
     .map((l) => {
       const p = byId.get(l.productId);
       if (!p) return null;
+      const rec = toRecord(p);
+      // A variant line prices and deducts stock from the chosen variant; a flat
+      // line uses the product itself. Prices are re-derived here at the wholesale
+      // tier — the browser never names a price.
+      if (l.variantId) {
+        const v = p.variants.find((x) => x.id === l.variantId);
+        if (!v) return null;
+        return {
+          productId: p.id,
+          variantId: v.id,
+          title: rec.title,
+          variantTitle: v.title,
+          sku: v.sku,
+          quantity: l.quantity,
+          unitPrice: priceForContext(num(v.price), {
+            wholesale: numOrNull(v.priceWholesale),
+            shop: numOrNull(v.priceShop),
+            ebay: numOrNull(v.priceEbay),
+            amazon: numOrNull(v.priceAmazon),
+          }, { wholesale: true }),
+        };
+      }
+      // A product that actually has variants must be ordered by variant.
+      if (p.variants.length > 0) return null;
       return {
         productId: p.id,
-        title: p.title,
-        sku: p.sku,
+        variantId: null,
+        title: rec.title,
+        variantTitle: "",
+        sku: rec.sku,
         quantity: l.quantity,
-        unitPrice: wholesalePrice(p),
+        unitPrice: wholesalePrice(rec),
       };
     })
     .filter((l): l is NonNullable<typeof l> => l !== null);
