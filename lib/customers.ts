@@ -618,6 +618,60 @@ export async function generateTradeCode(id: string): Promise<string> {
   return code;
 }
 
+/**
+ * Total receivable across the whole book — the dashboard headline.
+ *
+ * Defined the SAME way as each customer's balance (opening + billed − paid) so
+ * the dashboard can never disagree with the Customers page. A customer in credit
+ * is a liability, not a receivable, so each account is floored at zero (matching
+ * the Customers page's "Outstanding" total) rather than offsetting other
+ * customers' debts. Walk-in invoices have no account, so their unpaid balances
+ * are added directly. `outstandingTotal()` in lib/billing only summed invoice
+ * balances and so ignored opening balances and account credits entirely.
+ */
+export async function totalReceivable(): Promise<number> {
+  const [invoices, credits, customers] = await Promise.all([
+    db.invoice.findMany({
+      where: { status: { not: "VOID" } },
+      include: { lines: true, payments: { where: { revoked: false }, select: { amount: true } } },
+      take: 20000,
+    }),
+    // Unallocated payments (invoiceId null) are account credits.
+    db.payment.findMany({
+      where: { revoked: false, invoiceId: null },
+      select: { customerId: true, amount: true },
+    }),
+    db.customer.findMany({ select: { id: true, openingBalance: true } }),
+  ]);
+
+  // Per-account net (opening + Σ invoice balance − Σ credits); walk-ins keyed null.
+  const netByCustomer = new Map<string, number>();
+  const walkinKey = "__walkin__";
+  for (const c of customers) netByCustomer.set(c.id, num(c.openingBalance));
+
+  for (const inv of invoices) {
+    const total = invoiceTotal(inv as CustomerRow["invoices"][number]);
+    const paid = inv.payments.reduce((s, p) => s + num(p.amount), 0);
+    const balance = money2(total - paid);
+    const key = inv.customerId ?? walkinKey;
+    netByCustomer.set(key, (netByCustomer.get(key) ?? 0) + balance);
+  }
+  for (const c of credits) {
+    const key = c.customerId ?? walkinKey;
+    netByCustomer.set(key, (netByCustomer.get(key) ?? 0) - num(c.amount));
+  }
+
+  let sum = 0;
+  for (const [key, net] of netByCustomer) {
+    // Walk-in "customer" is a bag of unrelated one-off bills — each is owed in
+    // its own right, so a walk-in credit (rare) can't cancel a walk-in debt.
+    // Account customers net to a single balance, floored at zero.
+    if (key === walkinKey) sum += Math.max(0, net);
+    else sum += Math.max(0, money2(net));
+  }
+  return money2(sum);
+}
+
 /** Everyone billed today, with their bills — powers the day-report drawer. */
 export async function customersBilledToday(range: { start: Date; end: Date }) {
   const invoices = await db.invoice.findMany({
