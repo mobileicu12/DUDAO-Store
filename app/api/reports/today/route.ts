@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { canSeeFinanceRequest, errorResponse, requireAuth } from "@/lib/guard";
 import { db, money2, num } from "@/lib/db";
-import { computeTotals, dayRange, outstandingTotal } from "@/lib/billing";
+import { computeTotals, dayRange } from "@/lib/billing";
+import { totalReceivable } from "@/lib/customers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,10 +108,10 @@ export async function GET() {
         }
       : null;
 
-    // The same figure the invoices list shows, from one shared function, so
-    // the dashboard and the invoices page can never disagree. Voided and
-    // deleted invoices drop out of it immediately.
-    const outstanding = await outstandingTotal();
+    // Total money owed to the shop, defined the SAME way as the Customers page
+    // (opening balance + billed − paid, per account, credits floored) so the two
+    // screens can never disagree. Includes opening balances and walk-in bills.
+    const outstanding = await totalReceivable();
 
     return NextResponse.json({
       invoiced,
