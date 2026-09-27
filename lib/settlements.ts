@@ -78,17 +78,16 @@ export async function deleteBuying(id: string): Promise<void> {
 
 /**
  * Sales money actually received in a window — the sum of non-revoked payments
- * against invoices issued in the window. This is the gross that buying is
- * settled against to show net earnings.
+ * TAKEN in the window (by payment date, not invoice date). This is the money
+ * that came through the door in the period, which is what buying is settled
+ * against for net earnings, and it matches the dashboard's "collected" figure.
+ * Payments against a voided bill are auto-revoked, so they drop out; account
+ * credits are money in and count.
  */
 export async function salesReceivedBetween(from: Date, to: Date): Promise<number> {
-  const invoices = await db.invoice.findMany({
-    where: { issuedAt: { gte: from, lte: to }, status: { not: "VOID" } },
-    include: { payments: { where: { revoked: false }, select: { amount: true } } },
+  const agg = await db.payment.aggregate({
+    where: { takenAt: { gte: from, lte: to }, revoked: false },
+    _sum: { amount: true },
   });
-  let sum = 0;
-  for (const inv of invoices) {
-    for (const p of inv.payments) sum += num(p.amount);
-  }
-  return money2(sum);
+  return money2(num(agg._sum.amount));
 }
