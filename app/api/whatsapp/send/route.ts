@@ -27,7 +27,13 @@ export async function POST(req: Request) {
 
     const result = await sendWhatsApp(to, message, params);
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 502 });
+      // Cloud API failed — fall back to a wa.me link so the WhatsApp button
+      // never dead-ends; the message can always be sent manually.
+      return NextResponse.json({
+        ok: true,
+        redirect: waRedirectUrl(to, message),
+        apiError: result.error,
+      });
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

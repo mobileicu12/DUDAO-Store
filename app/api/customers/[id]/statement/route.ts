@@ -49,8 +49,13 @@ export async function POST(req: Request, { params }: Ctx) {
           `${business.currency} ${customer.outstanding.toFixed(2)}`,
           link,
         ]);
-        if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
-        return NextResponse.json({ ok: true });
+        if (res.ok) return NextResponse.json({ ok: true });
+        // Cloud API failed: fall back to wa.me so the button never dead-ends.
+        return NextResponse.json({
+          ok: true,
+          redirect: waRedirectUrl(customer.phone, text),
+          apiError: res.error,
+        });
       }
       // Otherwise hand back a wa.me link — opens WhatsApp with the message
       // prefilled (to this contact, or the picker when there's no number).
