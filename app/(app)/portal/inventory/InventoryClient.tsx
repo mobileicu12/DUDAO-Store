@@ -27,6 +27,7 @@ import {
   PageHeader,
   Segmented,
   Skeleton,
+  StatCard,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
@@ -72,6 +73,8 @@ export default function InventoryClient() {
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [threshold, setThreshold] = useState(5);
+  const [stockValue, setStockValue] = useState<number | null>(null);
+  const [stockUnits, setStockUnits] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -172,6 +175,17 @@ export default function InventoryClient() {
     setTotal(tot);
     setThreshold(thr);
     setSelected(new Set());
+    // Whole-catalog stock value + units (variant-aware, server-computed).
+    try {
+      const sres = await fetch("/api/stats", { cache: "no-store" });
+      if (sres.ok) {
+        const s = (await sres.json()) as { stockValue?: number; stockUnits?: number };
+        setStockValue(typeof s.stockValue === "number" ? s.stockValue : null);
+        setStockUnits(typeof s.stockUnits === "number" ? s.stockUnits : null);
+      }
+    } catch {
+      /* stat row just won't show */
+    }
   }, [fetchPage]);
 
   // Reload from the top whenever the query changes.
@@ -338,6 +352,28 @@ export default function InventoryClient() {
           </>
         }
       />
+
+      {/* Stock value + units on hand, across the whole catalogue. */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Products" value={total.toLocaleString()} loading={loading} />
+        <StatCard
+          label="Stock on hand"
+          value={stockUnits === null ? "—" : `${stockUnits.toLocaleString()} units`}
+          loading={loading}
+        />
+        <StatCard
+          label="Stock value"
+          value={stockValue === null ? "—" : money(stockValue)}
+          loading={loading}
+          tone="info"
+        />
+        <StatCard
+          label="Needs restock"
+          value={products.filter((p) => p.stock <= threshold).length.toLocaleString()}
+          loading={loading}
+          tone="warning"
+        />
+      </div>
 
       {/* Toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
