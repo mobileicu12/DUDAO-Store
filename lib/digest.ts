@@ -173,7 +173,7 @@ export async function customerDayPdf(
       paid: i.paid,
       lines: i.lines,
     })),
-    { date, business, outstanding },
+    { date, business, outstanding, paid: group.dayPaid },
   );
 
   return {
