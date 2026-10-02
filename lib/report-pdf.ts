@@ -250,7 +250,7 @@ export function buildCustomerDayDoc(
 export function buildCustomerDayItemisedDoc(
   customer: { name: string; company?: string },
   invoices: CustomerDayInvoice[],
-  opts: { date: string; business: BusinessDoc; outstanding?: number },
+  opts: { date: string; business: BusinessDoc; outstanding?: number; paid?: number },
 ): jsPDF {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const { business } = opts;
@@ -291,12 +291,22 @@ export function buildCustomerDayItemisedDoc(
 
   y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
   const dayTotal = invoices.reduce((s, i) => s + i.total, 0);
+  const dayPaid = opts.paid ?? invoices.reduce((s, i) => s + i.paid, 0);
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(INK);
-  doc.text("Today's total", right - 60, y);
-  doc.text(fmt(dayTotal, business.currency), right, y, { align: "right" });
+  const totalRow = (label: string, value: number, bold = false, tone?: string) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(bold ? 10 : 9);
+    doc.setTextColor(tone ?? INK);
+    doc.text(label, right - 60, y);
+    doc.text(fmt(value, business.currency), right, y, { align: "right" });
+    y += bold ? 6 : 5;
+  };
+  totalRow("Today's total", dayTotal, true);
+  totalRow("Paid today", dayPaid);
+  if (opts.outstanding !== undefined) {
+    y += 1;
+    totalRow("Account outstanding", opts.outstanding, true, opts.outstanding > 0 ? "#b3261e" : INK);
+  }
 
   footer(doc, business);
   return doc;

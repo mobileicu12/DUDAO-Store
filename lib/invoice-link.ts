@@ -54,6 +54,14 @@ export const statementSharePath = (id: string, date: string): string =>
   `/api/public/statement/${id}?date=${date}&t=${signStatementToken(id, date)}`;
 
 /**
+ * The itemised "today's bills" document — the same capability token as the
+ * statement (keyed on customer + date), but the PDF lists every line item of
+ * each of that day's bills, which the account statement does not.
+ */
+export const daySharePath = (id: string, date: string): string =>
+  `/api/public/day/${id}?date=${date}&t=${signStatementToken(id, date)}`;
+
+/**
  * The customer-facing landing PAGE for a shared document — a small page with
  * "View PDF" and "Download PDF" buttons, so there's always a clear download
  * option on any device. The raw-PDF *Share paths above back its buttons.
@@ -63,6 +71,10 @@ export const invoicePagePath = (id: string): string =>
 
 export const statementPagePath = (id: string, date: string): string =>
   `/p/statement/${id}?date=${date}&t=${signStatementToken(id, date)}`;
+
+/** Landing page for the itemised "today's bills" document. */
+export const dayPagePath = (id: string, date: string): string =>
+  `/p/day/${id}?date=${date}&t=${signStatementToken(id, date)}`;
 
 /**
  * Absolute URL for messages — a relative path is useless in WhatsApp.
