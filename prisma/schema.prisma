@@ -183,6 +183,10 @@ model Setting {
   /// invoices, balance and statement. Off hides trade login entirely.
   customerPortal Boolean @default(true)
 
+  /// Master switch for the public storefront (/shop). Off takes the whole shop
+  /// offline — visitors see an "unavailable" page — without touching the portal.
+  storefront Boolean @default(true)
+
   updatedAt DateTime @updatedAt
 }
 

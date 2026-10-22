@@ -176,7 +176,7 @@ const FIELDS: Record<string, string[]> = {
   payment: ["id", "customerId", "invoiceId", "amount", "method", "note", "staffEmail", "revoked", "revokedAt", "takenAt"],
   attendance: ["id", "email", "name", "userId", "tapIn", "tapOut", "autoOut"],
   counter: ["id", "year", "seq"],
-  setting: ["id", "name", "tagline", "address", "email", "phone", "website", "taxNumber", "bankDetails", "invoiceFooter", "invoicePrefix", "taxRate", "lowStockThreshold", "currency", "faviconUrl", "digestEnabled", "digestToCustomers", "digestToOwner", "digestOwnerEmail", "digestOwnerWa", "digestLastRun", "requireTapIn", "reportButtonHour", "customerPortal"],
+  setting: ["id", "name", "tagline", "address", "email", "phone", "website", "taxNumber", "bankDetails", "invoiceFooter", "invoicePrefix", "taxRate", "lowStockThreshold", "currency", "faviconUrl", "digestEnabled", "digestToCustomers", "digestToOwner", "digestOwnerEmail", "digestOwnerWa", "digestLastRun", "requireTapIn", "reportButtonHour", "customerPortal", "storefront"],
   integration: ["whatsappToken", "whatsappPhoneId", "whatsappTemplate", "whatsappTemplateLang"],
   expense: ["id", "date", "category", "description", "amount", "method", "note", "createdBy", "createdAt"],
   buying: ["id", "date", "supplier", "description", "amount", "included", "createdBy", "createdAt"],

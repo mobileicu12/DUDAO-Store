@@ -284,6 +284,28 @@ export default function SettingsClient() {
           </div>
         </Card>
 
+        {/* Public storefront master switch */}
+        <Card>
+          <CardHeader
+            title="Public shop"
+            subtitle="Show the online shop to the public, or take it offline."
+          />
+          <div className="mt-3">
+            <Switch
+              checked={settings.storefront}
+              onChange={(v) => set({ storefront: v })}
+              label="Show the public shop at /shop"
+            />
+            <p className="mt-2 text-xs text-muted">
+              When on, anyone can browse the catalogue at{" "}
+              <span className="font-medium text-ink-2">/shop</span> (trade prices
+              stay behind login). Turn off to take the whole shop offline — every
+              shop page then shows an &ldquo;unavailable&rdquo; notice, without
+              affecting the staff portal.
+            </p>
+          </div>
+        </Card>
+
         {/* Storefront customer portal */}
         <Card>
           <CardHeader

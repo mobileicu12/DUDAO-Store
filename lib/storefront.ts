@@ -14,6 +14,12 @@ export async function customerPortalEnabled(): Promise<boolean> {
   return s ? s.customerPortal : true;
 }
 
+/** Is the public storefront (/shop) turned on in Settings? Off = shop offline. */
+export async function storefrontEnabled(): Promise<boolean> {
+  const s = await getSettings().catch(() => null);
+  return s ? s.storefront : true;
+}
+
 /**
  * Storefront data layer. Everything the public /shop side reads or writes goes
  * through here, so the trade-price rule and the "must be seg:online" gate live
