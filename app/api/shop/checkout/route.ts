@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   createTradeCheckout,
   currentTradeCustomer,
+  storefrontEnabled,
   type CheckoutMethod,
 } from "@/lib/storefront";
 
@@ -15,6 +16,11 @@ const METHODS: CheckoutMethod[] = ["cash", "bank", "account"];
  * re-derived server-side, so the request only names product ids and quantities.
  */
 export async function POST(req: Request) {
+  // The shop can be switched off in Settings — refuse orders from a stale tab.
+  if (!(await storefrontEnabled())) {
+    return NextResponse.json({ error: "The shop is currently unavailable." }, { status: 403 });
+  }
+
   const customer = await currentTradeCustomer();
   if (!customer) {
     return NextResponse.json(

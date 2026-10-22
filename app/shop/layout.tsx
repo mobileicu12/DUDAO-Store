@@ -1,14 +1,23 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { BUSINESS } from "@/lib/business";
+import { storefrontEnabled } from "@/lib/storefront";
 import { CartProvider } from "./CartContext";
 import ShopHeader from "./ShopHeader";
+
+export const dynamic = "force-dynamic";
 
 /**
  * Public storefront chrome. Deliberately separate from the portal shell — no
  * sidebar, no staff nav. Trade customers live here; staff live in /portal.
+ *
+ * The whole shop is behind the Settings "Public shop" switch: when it's off the
+ * storefront is taken offline and every /shop page shows an unavailable notice.
  */
-export default function ShopLayout({ children }: { children: ReactNode }) {
+export default async function ShopLayout({ children }: { children: ReactNode }) {
+  const enabled = await storefrontEnabled();
+  if (!enabled) return <ShopOffline />;
+
   return (
     <CartProvider>
       <div className="flex min-h-dvh flex-col bg-bg">
@@ -49,5 +58,23 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
         </footer>
       </div>
     </CartProvider>
+  );
+}
+
+/** Shown on every /shop route when the public shop is switched off in Settings. */
+function ShopOffline() {
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center bg-bg px-4 text-center">
+      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8 shadow-sm">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-subtle text-xl">
+          🛈
+        </div>
+        <h1 className="text-xl font-semibold text-ink">{BUSINESS.name}</h1>
+        <p className="mt-2 text-sm text-muted">
+          Our online shop isn&apos;t available right now. Please check back later
+          or get in touch and we&apos;ll be happy to help.
+        </p>
+      </div>
+    </div>
   );
 }

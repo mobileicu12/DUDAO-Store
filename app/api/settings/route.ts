@@ -58,6 +58,7 @@ const WRITABLE: (keyof PortalSettings)[] = [
   "requireTapIn",
   "reportButtonHour",
   "customerPortal",
+  "storefront",
 ];
 
 export async function PUT(req: Request) {
