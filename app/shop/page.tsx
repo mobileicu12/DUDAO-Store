@@ -12,18 +12,29 @@ export const dynamic = "force-dynamic";
 export default async function ShopPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; type?: string }>;
+  searchParams: Promise<{ q?: string; type?: string; page?: string }>;
 }) {
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const type = sp.type ?? "";
+  const PER_PAGE = 48;
+  const page = Math.max(1, Math.floor(Number(sp.page) || 1));
 
   const [customer, { items, total }, types] = await Promise.all([
     currentTradeCustomer(),
-    shopProducts({ q, type, take: 48 }),
+    shopProducts({ q, type, take: PER_PAGE, skip: (page - 1) * PER_PAGE }),
     shopProductTypes(),
   ]);
   const isTrade = customer !== null;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+  const pageHref = (p: number) => {
+    const u = new URLSearchParams();
+    if (q) u.set("q", q);
+    if (type) u.set("type", type);
+    if (p > 1) u.set("page", String(p));
+    const qs = u.toString();
+    return qs ? `/shop?${qs}` : "/shop";
+  };
 
   const chip = (label: string, href: string, active: boolean) => (
     <Link
@@ -115,12 +126,45 @@ export default async function ShopPage({
         <>
           <p className="mb-3 text-xs text-muted">
             {total} product{total === 1 ? "" : "s"}
+            {totalPages > 1 ? ` · page ${page} of ${totalPages}` : ""}
           </p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {items.map((p) => (
               <ProductCard key={p.id} product={p} isTrade={isTrade} />
             ))}
           </div>
+
+          {totalPages > 1 && (
+            <div className="mt-8 flex items-center justify-center gap-3">
+              {page > 1 ? (
+                <Link
+                  href={pageHref(page - 1)}
+                  className="flex h-10 items-center rounded-md border border-line-strong bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-subtle"
+                >
+                  ← Previous
+                </Link>
+              ) : (
+                <span className="flex h-10 items-center rounded-md border border-line bg-subtle px-4 text-sm font-medium text-faint">
+                  ← Previous
+                </span>
+              )}
+              <span className="text-sm text-muted">
+                {page} / {totalPages}
+              </span>
+              {page < totalPages ? (
+                <Link
+                  href={pageHref(page + 1)}
+                  className="flex h-10 items-center rounded-md border border-line-strong bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-subtle"
+                >
+                  Next →
+                </Link>
+              ) : (
+                <span className="flex h-10 items-center rounded-md border border-line bg-subtle px-4 text-sm font-medium text-faint">
+                  Next →
+                </span>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
